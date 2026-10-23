@@ -67,7 +67,7 @@ export X4_RUNTIME_MODULES="$HOME/.local/share/xcloud4/runtime/sdk-v0.5.4"
 
 Both editions are compiled and packaged from the root of this repository after loading `~/.config/xcloud4/env.sh` and setting `X4_RUNTIME_MODULES`.
 
-### A. Public Beta (`X4_PUBLIC=1` -> `dist/XCloud4-1.0.0-beta-publico.pkg`)
+### A. Public Beta (`X4_PUBLIC=1` -> `dist/XCloud4-1.0.1-beta-publico.pkg`)
 
 ```bash
 source ~/.config/xcloud4/env.sh
@@ -85,9 +85,9 @@ python3 scripts/package_identity.py verify --mode public
 ```
 
 Output package:
-- `dist/XCloud4-1.0.0-beta-publico.pkg` (`TITLE`: `XCloud4`, `TITLE_ID`: `XCLD00003`, `APP_VER`: `01.01`, icon: `assets/icon0.png`)
+- `dist/XCloud4-1.0.1-beta-publico.pkg` (`TITLE`: `XCloud4`, `TITLE_ID`: `XCLD00003`, `APP_VER`: `01.02`, icon: `assets/icon0.png`)
 
-### B. Experimental Lab (`X4_PUBLIC=0` -> `dist/XCloud4-0.7.51-lab.pkg`)
+### B. Experimental Lab (`X4_PUBLIC=0` -> `dist/XCloud4-0.7.52-lab.pkg`)
 
 ```bash
 source ~/.config/xcloud4/env.sh
@@ -105,7 +105,7 @@ python3 scripts/package_identity.py verify --mode normal --suffix=""
 ```
 
 Output package:
-- `dist/XCloud4-0.7.51-lab.pkg` (`TITLE`: `XCloud4 Lab`, `TITLE_ID`: `XCLD00001`, `APP_VER`: `01.19`, icon: `assets/icon0-lab.png`)
+- `dist/XCloud4-0.7.52-lab.pkg` (`TITLE`: `XCloud4 Lab`, `TITLE_ID`: `XCLD00001`, `APP_VER`: `01.20`, icon: `assets/icon0-lab.png`)
 
 ---
 

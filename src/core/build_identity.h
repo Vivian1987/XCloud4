@@ -5,9 +5,9 @@
 #define X4_PUBLIC 0
 #endif
 #if X4_PUBLIC
-#define X4_PRODUCT_VERSION "1.0.0-beta"
+#define X4_PRODUCT_VERSION "1.0.1-beta"
 #else
-#define X4_PRODUCT_VERSION "0.7.51-lab"
+#define X4_PRODUCT_VERSION "0.7.52-lab"
 #endif
 #define X4_SOURCE_ID "e17abfb9414b019e3dbf2791ff2625a670026958"
 #if X4_RECEIVER_NACK

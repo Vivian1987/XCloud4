@@ -170,13 +170,15 @@ static bool trace_session_active(enum X4SessionState state)
 typedef struct {
     const X4LiveMediaSnapshot *media;
     const X4SessionSnapshot *session;
-    int muted, controls;
+    int muted;
+    const X4TouchMenu *touch_menu;
+    bool show_banner;
     bool received_banner;
 } StreamOverlayContext;
 static void stream_overlay(uint32_t *pixels,void *context)
 {
     const StreamOverlayContext *c=context;
-    x4_live_overlay(c->media,c->session,c->muted,c->controls,pixels);
+    x4_live_overlay(c->media,c->session,c->muted,c->touch_menu,c->show_banner,pixels);
     if(c->received_banner) x4_stream_received_draw(pixels,c->media->width,c->media->height,
         c->media->video_matrix_received,c->media->video_matrix_selected,c->media->video_full_range);
 }
@@ -262,6 +264,9 @@ int main(void)
 #endif
     bool diagnostic_stable = false;
     uint64_t diagnostic_mark = 0;
+    X4TouchMenu touch_menu;
+    x4_touch_menu_init(&touch_menu, X4_PUBLIC != 0);
+    uint64_t video_banner_until_us = 0;
     int overlay_key[11] = {0};
     uint64_t overlay_at = 0;
     uint64_t input_previous = 0, input_report_at = 0;
@@ -361,28 +366,27 @@ reopen_interface:;
         else if (session.rtc_connected) game_controls = 1;
         bool game_input = screen.page == 6 && game_controls && x4_auth_busy(auth) &&
             !closing && !session_back && !live_error;
-        bool chord = (controller.data.buttons & (ORBIS_PAD_BUTTON_L1 | ORBIS_PAD_BUTTON_R1)) ==
-            (ORBIS_PAD_BUTTON_L1 | ORBIS_PAD_BUTTON_R1);
 #if X4_PUBLIC
-        bool local_action = game_input && chord && (controller.data.buttons &
-            (ORBIS_PAD_BUTTON_CIRCLE | ORBIS_PAD_BUTTON_SQUARE));
-        bool guide_action = game_input && chord && (controller.data.buttons & ORBIS_PAD_BUTTON_TOUCH_PAD);
-        bool diagnostic_action = false;
         (void)diagnostic_stable;
         (void)diagnostic_mark;
-#else
-        bool local_action = game_input && chord && (controller.data.buttons &
-            (ORBIS_PAD_BUTTON_OPTIONS | ORBIS_PAD_BUTTON_CIRCLE | ORBIS_PAD_BUTTON_SQUARE));
-        bool guide_action = game_input && chord && (controller.data.buttons & ORBIS_PAD_BUTTON_TOUCH_PAD);
-        bool diagnostic_action = game_input && chord &&
-            (controller.data.buttons & ORBIS_PAD_BUTTON_TRIANGLE);
 #endif
+        if (game_input) {
+            x4_touch_menu_feed_touch(&touch_menu, game_input, controller.data.touch.fingers, controller_read_at);
+        } else {
+            x4_touch_menu_close(&touch_menu);
+        }
         X4GamepadFrame gamepad = {0};
-        if (game_input) x4_controller_gamepad(&controller, &gamepad);
-        if (local_action || guide_action || diagnostic_action) {
-            memset(&gamepad, 0, sizeof(gamepad));
-            gamepad.connected = controller.data.connected;
-            if (guide_action && !local_action && !diagnostic_action) gamepad.buttons = X4_GAMEPAD_NEXUS;
+        if (game_input) {
+            if (x4_touch_menu_is_open(&touch_menu)) {
+                gamepad.connected = controller.data.connected;
+            } else {
+                X4Controller filtered = controller;
+                filtered.data.buttons = x4_touch_menu_filter_buttons(&touch_menu, controller.data.buttons);
+                x4_controller_gamepad(&filtered, &gamepad);
+                if (x4_touch_menu_is_nexus_active(&touch_menu, controller_read_at)) {
+                    gamepad.buttons |= X4_GAMEPAD_NEXUS;
+                }
+            }
         }
 #if X4_STREAM_PROFILE
         gamepad.sampled_us=controller_read_at;
@@ -443,11 +447,42 @@ reopen_interface:;
 #elif X4_STREAM_PROFILE
             (void)stream_settings_ui;
 #endif
-            x4_screen_update(&screen, ui_pressed, controller.data.buttons);
+            if (game_input && x4_touch_menu_is_open(&touch_menu)) {
+                X4TouchMenuAction menu_action = x4_touch_menu_update(&touch_menu, controller.pressed, controller.data.buttons, controller_read_at);
+                switch (menu_action) {
+                case X4_TOUCH_MENU_ACTION_BACK_TO_CATALOG:
+                    trace_inactive(live);
+                    x4_auth_cancel(auth);
+                    session_back = 1;
+                    break;
+                case X4_TOUCH_MENU_ACTION_TOGGLE_MUTE:
+                    live_muted = !live_muted;
+                    if (live) x4_live_media_set_muted(live, live_muted != 0);
+                    break;
+                case X4_TOUCH_MENU_ACTION_XBOX_BUTTON:
+                    x4_touch_menu_trigger_nexus(&touch_menu, controller_read_at);
+                    break;
 #if !X4_PUBLIC
-            if (game_input && chord && (controller.pressed & ORBIS_PAD_BUTTON_OPTIONS))
-                screen.exit_requested = 1;
+                case X4_TOUCH_MENU_ACTION_MARK_TEST: {
+                    X4Trace *live_trace = live ? x4_live_media_trace(live) : NULL;
+                    diagnostic_stable = !diagnostic_stable;
+                    unsigned epoch = diagnostic_stable ? X4_MON_EPOCH_STABLE : X4_MON_EPOCH_TRANSITION;
+                    x4_trace_monitor_epoch(live_trace, X4_MON_ACTOR_SESSION, epoch);
+                    x4_trace_record(live_trace, X4_TRACE_SESSION_PHASE, 0, epoch, ++diagnostic_mark);
+                    printf("XCloud4: diagnostic phase=%s mark=%llu\n",
+                        diagnostic_stable ? "stable" : "transition", (unsigned long long)diagnostic_mark);
+                    break;
+                }
+                case X4_TOUCH_MENU_ACTION_EXIT_APP:
+                    screen.exit_requested = 1;
+                    break;
 #endif
+                default:
+                    break;
+                }
+                ui_pressed = 0;
+            }
+            x4_screen_update(&screen, ui_pressed, controller.data.buttons);
         }
         if ((previous_page == 4 || previous_page == 5 || previous_page == 6) && screen.page != previous_page) {
             x4_catalog_assets_suspend(catalog_assets);
@@ -557,7 +592,7 @@ reopen_interface:;
         }
         x4_auth_session_snapshot(auth, &session);
         if (!closing && screen.page == 6 && previous_page == 6) {
-            if ((controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) && (!game_input || chord)) {
+            if ((controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) && !game_input) {
                 trace_inactive(live);
                 x4_auth_cancel(auth);
                 session_back = 1;
@@ -744,7 +779,7 @@ reopen_interface:;
                     trace_inactive(live); x4_auth_cancel(auth);
 #endif
                 }
-                if (screen.page == 6 && (controller.pressed & ORBIS_PAD_BUTTON_SQUARE) && (!game_input || chord)) {
+                if (screen.page == 6 && (controller.pressed & ORBIS_PAD_BUTTON_SQUARE) && !game_input) {
                     live_muted = !live_muted;
                     x4_live_media_set_muted(live, live_muted != 0);
                 }
@@ -802,17 +837,14 @@ reopen_interface:;
             !live_error && !live_status.video_error && session.state != X4_SESSION_STOPPING &&
             live_status.video_ready;
         X4Trace *live_trace = live ? x4_live_media_trace(live) : NULL;
-#if !X4_PUBLIC
-        if (live_visible && diagnostic_action && (controller.pressed & ORBIS_PAD_BUTTON_TRIANGLE) &&
-            !local_action && !guide_action) {
-            diagnostic_stable = !diagnostic_stable;
-            unsigned epoch = diagnostic_stable ? X4_MON_EPOCH_STABLE : X4_MON_EPOCH_TRANSITION;
-            x4_trace_monitor_epoch(live_trace, X4_MON_ACTOR_SESSION, epoch);
-            x4_trace_record(live_trace, X4_TRACE_SESSION_PHASE, 0, epoch, ++diagnostic_mark);
-            printf("XCloud4: diagnostic phase=%s mark=%llu\n",
-                diagnostic_stable ? "stable" : "transition", (unsigned long long)diagnostic_mark);
+        if (!closing && screen.page == 6 && live && x4_auth_busy(auth)) {
+            if (live_status.video_ready && !video_banner_until_us) {
+                video_banner_until_us = controller_read_at + 6000000ULL;
+            }
+        } else {
+            video_banner_until_us = 0;
         }
-#endif
+        bool show_banner = (video_banner_until_us != 0 && controller_read_at < video_banner_until_us);
         bool trace_active = live_visible && !live_retained && trace_session_active(session.state);
         x4_trace_set_active(live_trace, trace_active);
         /* Runs before the idle continue too: a repeated/status-only refresh
@@ -840,7 +872,7 @@ reopen_interface:;
             if(live&&!live_retained&&!live_error){
                 if(!stream_received_until&&live_status.video_color_ready)
                     stream_received_until=input_at+6000000;
-                StreamOverlayContext overlay={&live_status,&session,live_muted,chord,
+                StreamOverlayContext overlay={&live_status,&session,live_muted,&touch_menu,show_banner,
                     live_status.video_color_ready&&input_at<stream_received_until};
 #if X4_STREAM_PROFILE
                 interaction_phase(X4_MON_PHASE_DRAW,sceKernelGetProcessTime());
@@ -874,7 +906,8 @@ reopen_interface:;
 #endif
         int next_overlay_key[11] = {screen.page, live_muted, live_status.audio_error,
             live_status.audio_playing, session.input_error, session.input_ready,
-            session.rtc_connected, session.state, screen.exit_error, controller.data.connected, chord};
+            session.rtc_connected, session.state, screen.exit_error, controller.data.connected,
+            (touch_menu.is_open ? (10 + touch_menu.selected_index) : 0) + (show_banner ? 100 : 0)};
         uint64_t draw_at = sceKernelGetProcessTime();
         bool overlay_changed = memcmp(overlay_key, next_overlay_key, sizeof(overlay_key)) != 0;
         if (live_visible && live_presented && !overlay_changed && draw_at - overlay_at < 500000 &&
@@ -904,7 +937,7 @@ reopen_interface:;
         if (screen.page == 3) x4_media_draw(&video, &audio, x4_display_pixels(&display));
         if (screen.page == 6) {
             if (drew_live)
-                x4_live_overlay(&live_status, &session, live_muted, chord, x4_display_pixels(&display));
+                x4_live_overlay(&live_status, &session, live_muted, &touch_menu, show_banner, x4_display_pixels(&display));
             else {
                 X4SessionSnapshot shown = session;
 #if X4_STREAM_PROFILE

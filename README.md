@@ -24,16 +24,16 @@ Both editions are built from this exact source tree (`X4_PUBLIC=1` and `X4_PUBLI
 
 | Edition | Package | PS4 Menu Title | Title ID | Target Audience |
 |---|---|---|---|---|
-| **Public Beta** | `XCloud4-1.0.0-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 720p60 streaming, Microsoft sign-in with an on-screen code, DualShock 4 rumble, and automatic Spanish/English UI. |
-| **Experimental Lab** | `XCloud4-0.7.51-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
+| **Public Beta** | `XCloud4-1.0.1-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 720p60 streaming, Microsoft sign-in with an on-screen code, DualShock 4 rumble, and automatic Spanish/English UI. |
+| **Experimental Lab** | `XCloud4-0.7.52-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
 
-See [RELEASE_NOTES_1.0.0-beta.md](RELEASE_NOTES_1.0.0-beta.md) and [RELEASE_NOTES_lab-0.7.51.md](RELEASE_NOTES_lab-0.7.51.md) for full details on each package.
+See [RELEASE_NOTES_1.0.1-beta.md](RELEASE_NOTES_1.0.1-beta.md) and [RELEASE_NOTES_lab-0.7.52.md](RELEASE_NOTES_lab-0.7.52.md) for full details on each package.
 
 ---
 
 ## Installation
 
-1. Download `XCloud4-1.0.0-beta-publico.pkg` (or `XCloud4-0.7.51-lab.pkg` for the experimental lab edition).
+1. Download `XCloud4-1.0.1-beta-publico.pkg` (or `XCloud4-0.7.52-lab.pkg` for the experimental lab edition).
 2. Copy the `.pkg` file to your PS4 using either:
    - A **USB drive** (FAT32 or exFAT) placed in the root directory, or
    - The **GoldHEN FTP server** into `/data/pkg/`.
@@ -44,21 +44,41 @@ See [RELEASE_NOTES_1.0.0-beta.md](RELEASE_NOTES_1.0.0-beta.md) and [RELEASE_NOTE
 
 ## Controls
 
-### In-Game Shortcuts (while streaming)
+### In-Game Menu (while streaming)
 
-| Shortcut | Action |
+To prevent conflicts with in-game button combinations (such as Power Shots in EA Sports FC), all legacy `L1 + R1` shortcuts have been replaced with a dedicated in-game touch menu:
+
+| Control | Action |
 |---|---|
-| Hold **L1 + R1** | Display the on-screen shortcut bar |
-| **L1 + R1 + CIRCLE** | Disconnect the current cloud session and return to the catalog |
-| **L1 + R1 + SQUARE** | Mute or unmute game audio |
-| **L1 + R1 + TOUCHPAD** | Send the **Xbox Guide** button to the cloud console |
-| **OPTIONS** | Mapped to the **Xbox Menu** button |
-| **TOUCHPAD click** | Mapped to the **Xbox View** button |
+| **Hold two fingers on Touchpad for 1 s** | Open the in-game menu |
+| **D-Pad Up / Down** | Navigate menu options |
+| **CROSS (X)** | Select / confirm highlighted option |
+| **CIRCLE** | Close menu and return to game |
+| **Auto-close** | Closes automatically after 15 seconds of inactivity |
+
+#### In-Game Menu Options
+- **Return to catalog:** Disconnect the cloud session and return to the game catalog.
+- **Mute / Unmute audio:** Toggle game stream sound.
+- **Xbox button:** Send the **Xbox Guide / Nexus** button to the cloud console (~200 ms pulse).
+- **Cancel:** Close the menu and resume play.
+- *(Lab only)* **Mark test:** Toggle diagnostic epoch/marker in session traces.
+- *(Lab only)* **Exit app:** Perform safe application shutdown.
+
+### Xbox Controller Mapping
+
+| PS4 Button | Xbox Equivalent |
+|---|---|
+| **Touchpad click** | **Xbox View** (Change view / Back) |
+| **OPTIONS** | **Xbox Menu** (Start) |
+| **D-Pad, Sticks, Triggers, Face buttons** | Mapped 1:1 to Xbox controller buttons and axes |
+
+> [!NOTE]
+> While the in-game menu is open, the game receives neutral controller input so your menu navigation does not affect the game. Game video and audio continue streaming in the background.
 
 ### Exiting the Application
 
 - To close **XCloud4** at any time: press the **PS button** and select **Close Application** (`PS button > Close Application`).
-- *(In the Experimental Lab edition only, pressing `OPTIONS` in the main menu or catalog also initiates a clean exit.)*
+- *(In the Experimental Lab edition only, pressing `OPTIONS` in the main menu or catalog, or choosing `Exit app` in the in-game menu, also initiates a clean exit.)*
 
 ---
 

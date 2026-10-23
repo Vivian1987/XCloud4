@@ -391,12 +391,10 @@ void x4_session_draw(const X4SessionSnapshot *s, int busy, int closing, uint32_t
     }
 #if X4_PUBLIC
     x4_text(p, 84, 867, 3, x4_tr(X4_TR_SESS_FOOTER_PUBLIC), WHITE);
-    x4_text(p, 84, 940, 2, x4_tr(X4_TR_SESS_L1R1_HINT1), MUTED);
-    x4_text(p, 84, 1004, 2, x4_tr(X4_TR_SESS_L1R1_HINT2_PUBLIC), MUTED);
+    x4_text(p, 84, 940, 2, x4_tr(X4_TR_GAME_TOUCH_HINT), MUTED);
 #else
     x4_text(p, 84, 867, 3, x4_tr(X4_TR_SESS_FOOTER_LAB), WHITE);
-    x4_text(p, 84, 940, 2, x4_tr(X4_TR_SESS_L1R1_HINT1), MUTED);
-    x4_text(p, 84, 1004, 2, x4_tr(X4_TR_SESS_L1R1_HINT2_LAB), MUTED);
+    x4_text(p, 84, 940, 2, x4_tr(X4_TR_GAME_TOUCH_HINT), MUTED);
 #endif
 }
 
@@ -433,20 +431,61 @@ void x4_live_status_draw(const X4LiveMediaSnapshot *m, int error, uint32_t *p)
         x4_text(p, 84, 922, 2, line, WHITE);
     }
 }
-void x4_live_overlay(const X4LiveMediaSnapshot *m, const X4SessionSnapshot *s, int muted, int show_controls, uint32_t *p)
+void x4_touch_menu_draw(const X4TouchMenu *menu, int muted, uint32_t *p)
 {
-    /* The game already fills the framebuffer. Do not reserve/crop any rows
-     * for normal playback; a fresh complete media draw also erases hints. */
-    if (show_controls) {
-        x4_rect(p, 0, X4_HEIGHT - 36, X4_WIDTH, 36, BG);
-        x4_text(p, 36, X4_HEIGHT - 27, 2,
-#if X4_PUBLIC
-            x4_tr(X4_TR_OVERLAY_HELP_PUBLIC), MUTED);
-#else
-            x4_tr(X4_TR_OVERLAY_HELP_LAB), MUTED);
-#endif
+    if (!menu || !menu->is_open) return;
+    int mw = 760;
+    int items = menu->item_count;
+    int mh = 66 + (items * 54) + 60;
+    int mx = (X4_WIDTH - mw) / 2;
+    int my = (X4_HEIGHT - mh) / 2;
+
+    /* Outer border and main modal card */
+    x4_rect(p, mx - 3, my - 3, mw + 6, mh + 6, 0xff150f0bu);
+    x4_rect(p, mx, my, mw, mh, 0xff281d16u);
+
+    /* Header */
+    x4_rect(p, mx, my, mw, 54, 0xff37291fu);
+    x4_text(p, mx + 32, my + 6, 3, x4_tr(X4_TR_TOUCH_MENU_TITLE), WHITE);
+
+    /* Options */
+    for (int i = 0; i < items; ++i) {
+        const char *text = "";
+        if (i == 0) text = x4_tr(X4_TR_TOUCH_MENU_BACK);
+        else if (i == 1) text = x4_tr(muted ? X4_TR_TOUCH_MENU_UNMUTE : X4_TR_TOUCH_MENU_MUTE);
+        else if (i == 2) text = x4_tr(X4_TR_TOUCH_MENU_XBOX);
+        else if (menu->is_public) {
+            if (i == 3) text = x4_tr(X4_TR_TOUCH_MENU_CANCEL);
+        } else {
+            if (i == 3) text = x4_tr(X4_TR_TOUCH_MENU_MARK_TEST);
+            else if (i == 4) text = x4_tr(X4_TR_TOUCH_MENU_EXIT_APP);
+            else if (i == 5) text = x4_tr(X4_TR_TOUCH_MENU_CANCEL);
+        }
+
+        int iy = my + 66 + i * 54;
+        if (i == menu->selected_index) {
+            x4_rect(p, mx + 16, iy, mw - 32, 48, 0xff107c10u);
+            x4_text(p, mx + 36, iy + 2, 3, text, WHITE);
+        } else {
+            x4_rect(p, mx + 16, iy, mw - 32, 48, 0xff30241cu);
+            x4_text(p, mx + 36, iy + 2, 3, text, MUTED);
+        }
     }
-    if (m->audio_error || s->input_error || muted) {
+
+    /* Footer */
+    x4_rect(p, mx + 16, my + mh - 48, mw - 32, 1, 0xff48372du);
+    x4_text(p, mx + 32, my + mh - 36, 2, x4_tr(X4_TR_TOUCH_MENU_FOOTER), MUTED);
+}
+
+void x4_live_overlay(const X4LiveMediaSnapshot *m, const X4SessionSnapshot *s, int muted,
+                     const X4TouchMenu *touch_menu, bool show_banner, uint32_t *p)
+{
+    /* 6-second banner when video playback starts */
+    if (show_banner && (!touch_menu || !touch_menu->is_open)) {
+        x4_rect(p, 0, X4_HEIGHT - 44, X4_WIDTH, 44, BG);
+        x4_text(p, 48, X4_HEIGHT - 34, 2, x4_tr(X4_TR_GAME_TOUCH_HINT), WHITE);
+    }
+    if (m && s && (m->audio_error || s->input_error || muted)) {
         char line[96];
         const char *audio = m->audio_error ? x4_tr(X4_TR_OVERLAY_AUDIO_UNAVAIL) : muted ? x4_tr(X4_TR_OVERLAY_AUDIO_MUTED) : "";
         snprintf(line, sizeof(line), "%s%s%s", audio,
@@ -454,5 +493,8 @@ void x4_live_overlay(const X4LiveMediaSnapshot *m, const X4SessionSnapshot *s, i
             s->input_error ? x4_tr(X4_TR_OVERLAY_INPUT_UNAVAIL) : "");
         x4_rect(p, 20, 20, 620, 36, BG);
         x4_text(p, 32, 29, 2, line, WHITE);
+    }
+    if (touch_menu && touch_menu->is_open) {
+        x4_touch_menu_draw(touch_menu, muted, p);
     }
 }
