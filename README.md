@@ -24,16 +24,16 @@ Both editions are built from this exact source tree (`X4_PUBLIC=1` and `X4_PUBLI
 
 | Edition | Package | PS4 Menu Title | Title ID | Target Audience |
 |---|---|---|---|---|
-| **Public Beta** | `XCloud4-1.0.1-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 720p60 streaming, Microsoft sign-in with an on-screen code, DualShock 4 rumble, and automatic Spanish/English UI. |
-| **Experimental Lab** | `XCloud4-0.7.52-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
+| **Public Beta** | `XCloud4-1.0.2-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 720p60 streaming, Microsoft sign-in with an on-screen code, DualShock 4 rumble, and automatic Spanish/English UI. |
+| **Experimental Lab** | `XCloud4-0.7.53-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
 
-See [RELEASE_NOTES_1.0.1-beta.md](RELEASE_NOTES_1.0.1-beta.md) and [RELEASE_NOTES_lab-0.7.52.md](RELEASE_NOTES_lab-0.7.52.md) for full details on each package.
+See [RELEASE_NOTES_1.0.2-beta.md](RELEASE_NOTES_1.0.2-beta.md) and [RELEASE_NOTES_lab-0.7.53.md](RELEASE_NOTES_lab-0.7.53.md) for full details on each package.
 
 ---
 
 ## Installation
 
-1. Download `XCloud4-1.0.1-beta-publico.pkg` (or `XCloud4-0.7.52-lab.pkg` for the experimental lab edition).
+1. Download `XCloud4-1.0.2-beta-publico.pkg` (or `XCloud4-0.7.53-lab.pkg` for the experimental lab edition).
 2. Copy the `.pkg` file to your PS4 using either:
    - A **USB drive** (FAT32 or exFAT) placed in the root directory, or
    - The **GoldHEN FTP server** into `/data/pkg/`.

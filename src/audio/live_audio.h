@@ -13,10 +13,15 @@ typedef struct {
     uint64_t underflow_interval_min_us, underflow_interval_max_us;
     uint64_t buffer_observations, buffer_p5_us, buffer_p50_us, buffer_p95_us, buffer_max_us;
     uint64_t packet_duration_count, packet_duration_p50_us, packet_duration_p95_us, packet_duration_max_us;
+    uint64_t target_observations, target_p50_us, target_max_us, target_adjustments;
+    unsigned target_current_samples, output_block_samples;
+    int open_512_rc, open_1024_rc;
+    bool open_512_attempted, open_1024_attempted;
+    uint64_t trim_events;
 } X4LiveAudioSnapshot;
 /* payload_type is fixed before the worker starts; -1 locks the first RTP. */
 X4LiveAudio *x4_live_audio_start(int *error, int payload_type);
-/* previous=true preserves the 0.7.47 worker; false selects the 40 ms/PLC worker. */
+/* previous=true preserves the 0.7.47 worker; false selects adaptive 50 ms/PLC. */
 X4LiveAudio *x4_live_audio_start_mode(int *error, int payload_type, bool previous);
 void x4_live_audio_receive(X4LiveAudio *, const uint8_t *, size_t);
 void x4_live_audio_snapshot(const X4LiveAudio *, X4LiveAudioSnapshot *);
