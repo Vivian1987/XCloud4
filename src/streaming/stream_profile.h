@@ -34,13 +34,14 @@ typedef enum X4StreamCpuVariant {
 typedef enum X4StreamDecoderDepth {
     X4_DEPTH_AUTO = 0, X4_DEPTH_1 = 1, X4_DEPTH_2 = 2
 } X4StreamDecoderDepth;
-/* Local session options; packed into settings bits8..10, independently of
- * profile/color/CPU/depth. Zero selects the new defaults for all three. */
+/* Local session options; packed into settings bits8..11, independently of
+ * profile/color/CPU/depth. Zero selects the defaults, including VSYNC. */
 enum {
     X4_INTERACTION_INPUT_60HZ = 1u,
     X4_INTERACTION_RUMBLE_OFF = 2u,
     X4_INTERACTION_AUDIO_PREVIOUS = 4u,
-    X4_INTERACTION_MASK = 7u
+    X4_INTERACTION_VSYNC_OFF = 8u,
+    X4_INTERACTION_MASK = 15u
 };
 typedef struct X4StreamRequestConfig {
     X4StreamRequestProfile profile;

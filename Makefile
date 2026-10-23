@@ -97,9 +97,7 @@ SOURCES := $(wildcard src/core/*.c src/ui/*.c src/video/*.c src/input/*.c src/au
 # Full license: docs/licenses/LLVM-libcxx-11-LICENSE.TXT.
 CXX_SOURCES := src/streaming/rtc_condition_variable.cpp
 OBJECTS := $(patsubst src/%.c,build/%.o,$(SOURCES)) $(patsubst src/%.cpp,build/%.o,$(CXX_SOURCES))
-ifeq ($(X4_PUBLIC),1)
 OBJECTS += build/third_party/qrcodegen/qrcodegen.o
-endif
 
 .PHONY: all package
 all: build/eboot.bin

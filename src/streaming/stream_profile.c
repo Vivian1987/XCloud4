@@ -35,10 +35,10 @@ X4StreamRequestConfig x4_stream_settings_get(void)
 {
 #if X4_PUBLIC
     (void)settings;
-    X4StreamRequestConfig result=x4_stream_request_config(X4_REQUEST_720P_HQ,X4_COLOR_AUTO_709);
+    X4StreamRequestConfig result=x4_stream_request_config(X4_REQUEST_1080P_G8,X4_COLOR_AUTO_709);
     result.cpu_variant=X4_CPU_0;
     result.decoder_depth=X4_DEPTH_AUTO;
-    result.interaction_modes=0;
+    result.interaction_modes=X4_INTERACTION_VSYNC_OFF;
     return result;
 #else
     unsigned word=atomic_load_explicit(&settings,memory_order_acquire);
@@ -54,7 +54,7 @@ bool x4_stream_settings_set(X4StreamRequestProfile profile, X4StreamColorPrefere
 {
     if ((unsigned)profile>X4_REQUEST_PROFILE_MAX || (unsigned)color>X4_COLOR_FORCE_601) return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0x7f0u)|(unsigned)profile|((unsigned)color<<3); }
+    do { desired=(old&0xff0u)|(unsigned)profile|((unsigned)color<<3); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;
 }
@@ -62,7 +62,7 @@ bool x4_stream_settings_set_cpu(X4StreamRequestProfile profile,X4StreamColorPref
 {
     if((unsigned)profile>X4_REQUEST_PROFILE_MAX||(unsigned)color>X4_COLOR_FORCE_601||(unsigned)cpu>X4_CPU_3)return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0x7c0u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4); }
+    do { desired=(old&0xfc0u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;
 }
@@ -72,7 +72,7 @@ bool x4_stream_settings_set_all(X4StreamRequestProfile profile,X4StreamColorPref
     if((unsigned)profile>X4_REQUEST_PROFILE_MAX||(unsigned)color>X4_COLOR_FORCE_601||
         (unsigned)cpu>X4_CPU_3||(unsigned)depth>X4_DEPTH_2)return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0x700u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4)|
+    do { desired=(old&0xf00u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4)|
         ((unsigned)depth<<6); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;

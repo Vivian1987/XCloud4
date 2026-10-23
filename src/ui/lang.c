@@ -275,6 +275,12 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_ASSET_SMALL_RETRY] = "Reintento",
     [X4_TR_NOTICE_COVER_CLEANUP] = "No se pudo cerrar la conexión de portadas. Sal y abre XCloud4 otra vez.",
     [X4_TR_NOTICE_QUERY_ERR_FMT] = "No se pudo iniciar la consulta (%d)",
+    [X4_TR_HOME_UPDATE_AVAILABLE_FMT] = "NUEVA VERSION DISPONIBLE: %s · GITHUB.COM/ASP11EDGR/XCLOUD4",
+    [X4_TR_UPDATE_CHECKING] = "COMPROBANDO ACTUALIZACIONES...",
+    [X4_TR_UPDATE_LATEST] = "ESTAS USANDO LA ULTIMA VERSION",
+    [X4_TR_UPDATE_AVAILABLE_FMT] = "HAY UNA VERSION NUEVA: %s",
+    [X4_TR_UPDATE_FAILED] = "NO SE PUDO COMPROBAR SI HAY ACTUALIZACIONES",
+    [X4_TR_AUTH_SCAN_PHONE] = "ESCANEA CON TU TELEFONO",
 };
 
 static const char *const table_en[X4_TR_COUNT] = {
@@ -436,6 +442,12 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_ASSET_SMALL_RETRY] = "Retry",
     [X4_TR_NOTICE_COVER_CLEANUP] = "Could not close cover connection. Close and reopen XCloud4.",
     [X4_TR_NOTICE_QUERY_ERR_FMT] = "Could not start request (%d)",
+    [X4_TR_HOME_UPDATE_AVAILABLE_FMT] = "NEW VERSION AVAILABLE: %s · GITHUB.COM/ASP11EDGR/XCLOUD4",
+    [X4_TR_UPDATE_CHECKING] = "CHECKING FOR UPDATES...",
+    [X4_TR_UPDATE_LATEST] = "YOU ARE USING THE LATEST VERSION",
+    [X4_TR_UPDATE_AVAILABLE_FMT] = "NEW VERSION AVAILABLE: %s",
+    [X4_TR_UPDATE_FAILED] = "COULD NOT CHECK FOR UPDATES",
+    [X4_TR_AUTH_SCAN_PHONE] = "SCAN WITH YOUR PHONE",
 };
 
 const char *x4_tr(enum X4TextId id)

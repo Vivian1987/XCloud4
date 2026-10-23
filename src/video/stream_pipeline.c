@@ -896,7 +896,9 @@ static int submit_display(X4StreamPipeline *p)
     if(rc)return rc;
     if(next_stream_flip>=(uint64_t)INT64_MAX)return X4_PIPELINE_EXHAUSTED;
     uint64_t begin=now_us(),arg=next_stream_flip++;
-    rc=sceVideoOutSubmitFlip(p->display_handle,ready.slot,ORBIS_VIDEO_OUT_FLIP_VSYNC,(int64_t)arg);
+    int mode=(p->request.interaction_modes&X4_INTERACTION_VSYNC_OFF)?
+        ORBIS_VIDEO_OUT_FLIP_HSYNC:ORBIS_VIDEO_OUT_FLIP_VSYNC;
+    rc=sceVideoOutSubmitFlip(p->display_handle,ready.slot,mode,(int64_t)arg);
     uint64_t end=now_us();duration(p,X4_STREAM_FLIP_CALL,end-begin);if(rc)return rc;
     duration(p,X4_STREAM_CONVERT_TO_SUBMIT,begin-p->display.slots[ready.slot].converted_us);
     rc=x4_video_pipeline_mark_submitted(&p->display,ready,arg,end);return rc?rc:sceGnmSubmitDone();
@@ -1279,6 +1281,9 @@ int x4_stream_pipeline_export(X4StreamPipeline *p,const X4ProbeStackReport *ingr
     fputs(",\"keyframe_limiter\":",f);write_keyframe_limiter(f,p->keyframe_limiter);
     fputs(",\"blocking_waits\":",f);write_waits(f,p);
     fputs(",\"interaction\":",f);x4_live_interaction_metrics_write(f);
+    fprintf(f,",\"synchronization\":{\"vsync\":%s,\"native_flip_mode\":%d,\"decode_end_metric\":\"decode_end_to_flip_observation\",\"submit_end_metric\":\"submit_return_to_flip_observation\",\"scope\":\"session-captured requested native argument; native submission errors propagate unchanged; p50/p95 upper bounds and actual maximum are in metrics.stages; local flip observation is not physical scanout or input latency\"}",
+        (p->request.interaction_modes&X4_INTERACTION_VSYNC_OFF)?"false":"true",
+        (p->request.interaction_modes&X4_INTERACTION_VSYNC_OFF)?ORBIS_VIDEO_OUT_FLIP_HSYNC:ORBIS_VIDEO_OUT_FLIP_VSYNC);
     fprintf(f,",\"cpu\":{\"policy_version\":2,\"variant\":%u,\"partially_applied\":%s,\"status_es\":\"%s\",\"native_decoder\":{\"adapter_start_attempted\":%s,\"start_attempted\":%s,\"priority\":%d,\"affinity\":%llu,\"application_result_scope\":\"start_attempted means the same config reached native Query; Query/Create returns are under decoder_start, early adapter rejection is separate\"},\"decode_caller\":",
         (unsigned)p->request.cpu_variant,cpu_partial(p)?"true":"false",cpu_partial(p)?"parcialmente aplicada":"sin fallos de ajuste observados",p->native_start_attempted?"true":"false",
         p->native_start_attempted&&p->native_info.decoder_cpu_priority!=0&&p->native_info.query_result!=INT32_MIN?"true":"false",

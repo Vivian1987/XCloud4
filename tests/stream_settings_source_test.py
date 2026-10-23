@@ -20,8 +20,8 @@ assert 'Profundidad: Auto (720p: 1 · 1080p: 2)' in settings
 assert 's->depth=(X4StreamDecoderDepth)current.decoder_depth;' in settings
 assert 's->interaction_modes=current.interaction_modes;' in settings
 assert 'x4_stream_settings_set_extended(s->profile,s->color,s->cpu,s->depth,s->interaction_modes)' in settings
-assert all(label in settings for label in('Envío del mando','Inmediato','60 Hz (anterior)','Vibración','Audio','Anterior','Nuevo'))
-assert '(s->row+1u)%7u' in settings and '(s->row+6u)%7u' in settings
+assert all(label in settings for label in('Envío del mando','Inmediato','60 Hz (anterior)','Vibración','Audio','Anterior','Nuevo','Sincronía vertical','No (menos retraso, puede verse un corte)'))
+assert '(s->row+1u)%8u' in settings and '(s->row+7u)%8u' in settings
 assert 's->applied = true; s->open = false;' in settings
 assert 'x4_stream_settings_summary(video_settings,sizeof(video_settings));' in gui
 assert 'txt(p,650,68,28,1,video_settings,580,green);' in gui

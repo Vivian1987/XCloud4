@@ -9,12 +9,16 @@
 #include "../src/ui/font.h"
 #include "../src/video/stream_color_policy.h"
 
-/* Interaction modes occupy existing UI padding; seven draft rows remain local. */
+/* Interaction modes occupy existing UI padding; eight draft rows remain local. */
 _Static_assert(sizeof(X4StreamSettingsUi)==24&&offsetof(X4StreamSettingsUi,row)==4&&
     offsetof(X4StreamSettingsUi,interaction_modes)==2&&
     offsetof(X4StreamSettingsUi,profile)==8&&offsetof(X4StreamSettingsUi,color)==12&&
     offsetof(X4StreamSettingsUi,cpu)==16&&offsetof(X4StreamSettingsUi,depth)==20,
     "explicit x86_64 UI draft layout");
+_Static_assert((X4_INTERACTION_VSYNC_OFF<<8)==(1u<<11)&&
+    !(X4_INTERACTION_VSYNC_OFF&(X4_INTERACTION_INPUT_60HZ|
+        X4_INTERACTION_RUMBLE_OFF|X4_INTERACTION_AUDIO_PREVIOUS)),
+    "vertical synchronization exclusively occupies settings bit 11");
 
 static unsigned checks;
 #define CHECK(x) do {++checks;if(!(x)){fprintf(stderr,"settings check line %d: %s\n",__LINE__,#x);abort();}}while(0)
@@ -167,10 +171,10 @@ static void interaction_options(void)
     X4StreamSettingsUi ui={0};
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_OPEN|X4_SETTINGS_CONFIRM,true));
     CHECK(ui.open&&ui.interaction_modes==0);
-    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_UP,true)&&ui.row==6);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_UP,true)&&ui.row==7);
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==0);
-    for(unsigned row=1;row<=6;++row)CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==row);
-    for(unsigned row=4;row<=6;++row) {
+    for(unsigned row=1;row<=7;++row)CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==row);
+    for(unsigned row=4;row<=7;++row) {
         ui.row=row;
         CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT|X4_SETTINGS_CONFIRM,true));
         CHECK(ui.open&&!ui.applied&&x4_stream_settings_get().interaction_modes==0);
@@ -189,10 +193,12 @@ static void interaction_options(void)
     CHECK(!ui.open&&x4_stream_settings_get().interaction_modes==X4_INTERACTION_MASK&&next.interaction_modes==X4_INTERACTION_MASK);
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_OPEN,true));
     ui.row=4;CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_LEFT,true));
-    CHECK(ui.interaction_modes==(X4_INTERACTION_RUMBLE_OFF|X4_INTERACTION_AUDIO_PREVIOUS));
+    CHECK(ui.interaction_modes==(X4_INTERACTION_RUMBLE_OFF|X4_INTERACTION_AUDIO_PREVIOUS|X4_INTERACTION_VSYNC_OFF));
     ui.row=5;CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_LEFT,true));
-    CHECK(ui.interaction_modes==X4_INTERACTION_AUDIO_PREVIOUS);
+    CHECK(ui.interaction_modes==(X4_INTERACTION_AUDIO_PREVIOUS|X4_INTERACTION_VSYNC_OFF));
     ui.row=6;CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_LEFT,true));
+    CHECK(ui.interaction_modes==X4_INTERACTION_VSYNC_OFF);
+    ui.row=7;CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_LEFT,true));
     CHECK(ui.interaction_modes==0);
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_CONFIRM,true));
     CHECK(x4_stream_settings_get().interaction_modes==0&&next.interaction_modes==X4_INTERACTION_MASK);
@@ -236,11 +242,12 @@ static void render(const char *dir)
         char name[32];snprintf(name,sizeof(name),"settings-depth-%u",depth);write_ppm(dir,name,p);
     }
     for(unsigned modes=0;modes<=X4_INTERACTION_MASK;++modes) {
-        X4StreamSettingsUi ui={.open=true,.row=modes==4u?0u:4u+modes%3u,.profile=X4_REQUEST_1080P_G8,
+        X4StreamSettingsUi ui={.open=true,.row=modes==4u?0u:4u+modes%4u,.profile=X4_REQUEST_1080P_G8,
             .color=X4_COLOR_AUTO_709,.interaction_modes=(unsigned char)modes};
         memset(p,0,count*sizeof(*p));x4_stream_settings_ui_draw(&ui,p);
         char name[32];snprintf(name,sizeof(name),"settings-interaction-%u",modes);write_ppm(dir,name,p);
     }
+    CHECK(x4_text_width_px(26,0,"No (menos retraso, puede verse un corte)")<=1220);
     char text[224];
     CHECK(!x4_stream_received_text(text,sizeof(text),1280,720,2,1,false));
     CHECK(strstr(text,"Recibido 1280×720")&&strstr(text,"SPS 2 (sin especificar)")&&strstr(text,"BT.709")&&strstr(text,"limitado"));

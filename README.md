@@ -24,16 +24,16 @@ Both editions are built from this exact source tree (`X4_PUBLIC=1` and `X4_PUBLI
 
 | Edition | Package | PS4 Menu Title | Title ID | Target Audience |
 |---|---|---|---|---|
-| **Public Beta** | `XCloud4-1.0.2-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 720p60 streaming, Microsoft sign-in with an on-screen code, DualShock 4 rumble, and automatic Spanish/English UI. |
-| **Experimental Lab** | `XCloud4-0.7.53-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
+| **Public Beta** | `XCloud4-1.1.0-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 1080p60 streaming, low-latency presentation, Microsoft sign-in with an on-screen code and QR, DualShock 4 rumble, and automatic Spanish/English UI. |
+| **Experimental Lab** | `XCloud4-0.7.55-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
 
-See [RELEASE_NOTES_1.0.2-beta.md](RELEASE_NOTES_1.0.2-beta.md) and [RELEASE_NOTES_lab-0.7.53.md](RELEASE_NOTES_lab-0.7.53.md) for full details on each package.
+See [RELEASE_NOTES_1.1.0-beta.md](RELEASE_NOTES_1.1.0-beta.md) and [RELEASE_NOTES_lab-0.7.55.md](RELEASE_NOTES_lab-0.7.55.md) for full details on each package.
 
 ---
 
 ## Installation
 
-1. Download `XCloud4-1.0.2-beta-publico.pkg` (or `XCloud4-0.7.53-lab.pkg` for the experimental lab edition).
+1. Download `XCloud4-1.1.0-beta-publico.pkg` (or `XCloud4-0.7.55-lab.pkg` for the experimental lab edition).
 2. Copy the `.pkg` file to your PS4 using either:
    - A **USB drive** (FAT32 or exFAT) placed in the root directory, or
    - The **GoldHEN FTP server** into `/data/pkg/`.
@@ -110,6 +110,10 @@ To authenticate with Xbox Cloud Gaming, XCloud4 uses the standard Microsoft OAut
 - Public device-code clients use **no client secret**.
 - Your Microsoft password is entered **only** on Microsoft's official verification page in your own browser, never inside XCloud4.
 - Access and refresh tokens are held **only in PS4 RAM** while the application is running and are never written to disk or shared externally.
+
+### Privacy and Update Notifications
+
+XCloud4 consulta una vez al arrancar la API pública de GitHub Releases para avisar de versiones nuevas; XCloud4 no envía datos de tu cuenta ni datos personales; GitHub solo ve la conexión, como con cualquier web. (XCloud4 queries the public GitHub Releases API once at startup to notify users of new versions. It sends no account or personal data; GitHub only sees the connection, as with any website.)
 
 ---
 

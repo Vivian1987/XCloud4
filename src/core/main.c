@@ -19,6 +19,7 @@
 #include "../streaming/stream_profile.h"
 #include "../ui/stream_video_status.h"
 #include "../ui/stream_settings.h"
+#include "../auth/release_check.h"
 
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
 /* Main is the sole writer and exporter. No pad read or local action is
@@ -287,6 +288,7 @@ int main(void)
     x4_catalog_presentation_init(&presentation);
     setvbuf(stdout, NULL, _IONBF, 0);
     (void)x4_lang_init();
+    x4_release_check_start();
 reopen_interface:;
     if (x4_font_init("/app0/assets/fonts/noto_sans.x4font") < 0)
         printf("XCloud4: fuente externa no disponible; respaldo suavizado activo\n");
@@ -1047,6 +1049,7 @@ reopen_interface:;
 #endif
     x4_font_close();
     printf("XCloud4: recursos cerrados\n");
+    x4_release_check_stop();
     int exit_rc = x4_exit_prepare();
     if (exit_rc >= 0) exit_rc = x4_exit_request();
     if (exit_rc >= 0) {

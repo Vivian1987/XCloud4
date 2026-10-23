@@ -101,6 +101,21 @@ uint64_t x4_http_public_retry_after_ms(const X4Http *http);
  * BUSY. Native deletion failures quarantine the context, as elsewhere. */
 int x4_http_public_reset(X4Http *http);
 
+#define X4_HTTP_RELEASES_URL_PUBLIC "https://api.github.com/repos/asp11edgr/XCloud4/releases/latest"
+#define X4_HTTP_RELEASES_URL_LAB "https://api.github.com/repos/asp11edgr/XCloud4/releases?per_page=10"
+#define X4_HTTP_RELEASES_BODY_MAX (256u * 1024)
+
+/* GitHub Releases check, under the same TLS (KNOWN_CA), redirect (none) and
+ * cookie rules. Accepts exactly the fixed release endpoint for the active
+ * build edition:
+ *   GET https://api.github.com/repos/asp11edgr/XCloud4/releases/latest     (public)
+ *   GET https://api.github.com/repos/asp11edgr/XCloud4/releases?per_page=10 (lab)
+ * Fixed headers: User-Agent "XCloud4/<X4_PRODUCT_VERSION>" and
+ * Accept "application/vnd.github+json". capacity is at most
+ * X4_HTTP_RELEASES_BODY_MAX + 1. Total timeout 10 s. */
+int x4_http_releases_request(X4Http *http, const char *url, char *body, size_t capacity,
+    size_t *length, int *status, const _Atomic int *cancel);
+
 enum X4HttpSessionMethod { X4_SESSION_HTTP_GET, X4_SESSION_HTTP_POST, X4_SESSION_HTTP_DELETE };
 
 /* Xbox cloud session exchanges on the validated default region host

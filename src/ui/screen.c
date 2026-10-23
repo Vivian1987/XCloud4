@@ -1,15 +1,49 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "screen.h"
 #include "canvas.h"
+#include "font.h"
 #include "lang.h"
 #include "../auth/auth_profile.h"
 #include "../core/build_identity.h"
 #include "stream_video_status.h"
-#if X4_PUBLIC
 #include "../../third_party/qrcodegen/qrcodegen.h"
-#endif
+#include "../auth/release_check.h"
 #include <stdio.h>
 #include <string.h>
+
+static bool auth_qr_code_valid(const char *code)
+{
+    if (!code || !code[0]) return false;
+    for (const char *p = code; *p; ++p) {
+        char c = *p;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    }
+    return true;
+}
+
+static bool auth_qr_uri_valid(const char *uri)
+{
+    if (!uri) return false;
+    static const char *const allowed[] = {
+        "https://microsoft.com/devicelogin",
+        "https://www.microsoft.com/link",
+        "https://www.microsoft.com/devicelogin",
+    };
+    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) {
+        if (!strcmp(uri, allowed[i])) return true;
+    }
+    return false;
+}
+
+bool x4_auth_qr_payload(const char *uri, const char *code, char *payload_out, size_t cap)
+{
+    if (!auth_qr_uri_valid(uri) || !auth_qr_code_valid(code)) return false;
+    if (payload_out && cap) {
+        snprintf(payload_out, cap, "%s?otc=%s", uri, code);
+    }
+    return true;
+}
 static const uint32_t BG = 0xff1b1510, PANEL = 0xff30261c;
 static const uint32_t WHITE = 0xfff5f1eb, MUTED = 0xffb6a899, GREEN = 0xff72d86e;
 void x4_screen_update(X4Screen *s, uint32_t pressed, uint32_t held)
@@ -60,6 +94,12 @@ static void home(uint32_t *p, const X4Screen *s)
 #if X4_PUBLIC
     x4_text(p, 84, 267, 5, x4_tr(X4_TR_HOME_TITLE), WHITE);
     x4_text(p, 84, 332, 3, x4_tr(X4_TR_HOME_SUBTITLE_PUBLIC), MUTED);
+    char update_ver[32] = {0};
+    if (x4_release_check_status(update_ver, sizeof(update_ver)) == X4_UPDATE_AVAILABLE && update_ver[0]) {
+        char banner[128];
+        snprintf(banner, sizeof(banner), x4_tr(X4_TR_HOME_UPDATE_AVAILABLE_FMT), update_ver);
+        x4_text(p, 84, 388, 3, banner, GREEN);
+    }
     const char *titles[] = {
         x4_tr(X4_TR_CARD_ACCOUNT_TITLE),
         x4_tr(X4_TR_CARD_ABOUT_TITLE),
@@ -83,6 +123,12 @@ static void home(uint32_t *p, const X4Screen *s)
 #else
     x4_text(p, 84, 267, 5, x4_tr(X4_TR_HOME_TITLE), WHITE);
     x4_text(p, 84, 332, 3, x4_tr(X4_TR_HOME_SUBTITLE_LAB), MUTED);
+    char update_ver[32] = {0};
+    if (x4_release_check_status(update_ver, sizeof(update_ver)) == X4_UPDATE_AVAILABLE && update_ver[0]) {
+        char banner[128];
+        snprintf(banner, sizeof(banner), x4_tr(X4_TR_HOME_UPDATE_AVAILABLE_FMT), update_ver);
+        x4_text(p, 84, 388, 3, banner, GREEN);
+    }
     const char *titles[] = {"CONTROL", "PROYECTO", "IMAGEN Y\nSONIDO", x4_tr(X4_TR_CARD_ACCOUNT_TITLE)};
     const char *descriptions[] = {"BOTONES, PALANCAS\nY GATILLOS.", "ESTADO Y SIGUIENTES\nETAPAS DEL PROYECTO.", "UN VIDEO LOCAL\nY TONOS EN ESTEREO.", x4_tr(X4_TR_CARD_ACCOUNT_DESC)};
     for (int i = 0; i < 4; ++i) {
@@ -142,6 +188,34 @@ static void controller_page(uint32_t *p, const X4Controller *c)
 #endif
 }
 #endif
+static void draw_update_status(uint32_t *p, int x, int y)
+{
+    char ver[32] = {0};
+    enum X4UpdateStatus st = x4_release_check_status(ver, sizeof(ver));
+    char line[128];
+    uint32_t color = MUTED;
+    switch (st) {
+    case X4_UPDATE_CHECKING:
+        snprintf(line, sizeof(line), "%s", x4_tr(X4_TR_UPDATE_CHECKING));
+        color = MUTED;
+        break;
+    case X4_UPDATE_LATEST:
+        snprintf(line, sizeof(line), "%s", x4_tr(X4_TR_UPDATE_LATEST));
+        color = WHITE;
+        break;
+    case X4_UPDATE_AVAILABLE:
+        snprintf(line, sizeof(line), x4_tr(X4_TR_UPDATE_AVAILABLE_FMT), ver);
+        color = GREEN;
+        break;
+    case X4_UPDATE_FAILED:
+    default:
+        snprintf(line, sizeof(line), "%s", x4_tr(X4_TR_UPDATE_FAILED));
+        color = MUTED;
+        break;
+    }
+    x4_text(p, x, y, 2, line, color);
+}
+
 static void project_page(uint32_t *p)
 {
 #if X4_PUBLIC
@@ -155,6 +229,7 @@ static void project_page(uint32_t *p)
     x4_text(p, 126, 632, 2, x4_tr(X4_TR_ABOUT_LINE6), MUTED);
     x4_text(p, 126, 704, 2, x4_tr(X4_TR_ABOUT_LINE7), WHITE);
     x4_text(p, 126, 760, 2, x4_tr(X4_TR_ABOUT_LINE8), MUTED);
+    draw_update_status(p, 126, 812);
     x4_text(p, 84, 894, 3, x4_tr(X4_TR_CIRCLE_BACK), WHITE);
 #else
     x4_text(p, 84, 267, 5, "UN CLIENTE NATIVO PARA PS4", WHITE);
@@ -164,6 +239,7 @@ static void project_page(uint32_t *p)
     x4_text(p, 126, 550, 3, "CONTROL, IMAGEN Y SONIDO. CUENTA MICROSOFT Y CATALOGO.", WHITE);
     x4_text(p, 126, 625, 4, "DESPUES", WHITE);
     x4_text(p, 126, 685, 3, "CONEXION A UN JUEGO. IMAGEN, SONIDO Y CONTROL EN LA NUBE.", MUTED);
+    draw_update_status(p, 126, 748);
     x4_text(p, 84, 894, 3, "CIRCULO  VOLVER     OPTIONS  SALIR", WHITE);
 #endif
 }
@@ -298,6 +374,49 @@ void x4_auth_draw(const X4AuthSnapshot *a, int busy, int closing, uint32_t *p)
         snprintf(left, sizeof(left), x4_tr(X4_TR_AUTH_EXPIRES_FMT), a->seconds_left / 60, a->seconds_left % 60);
         x4_text(p, 126, 661, 3, left, MUTED);
         x4_text(p, 126, 734, 3, x4_tr(X4_TR_AUTH_CANCEL_HINT), MUTED);
+
+        static uint8_t auth_qr_cdata[qrcodegen_BUFFER_LEN_MAX];
+        static uint8_t auth_qr_temp[qrcodegen_BUFFER_LEN_MAX];
+        static char cached_code[32] = "";
+        static char cached_uri[256] = "";
+        static int auth_qr_valid = 0;
+
+        if (strcmp(cached_code, a->user_code) != 0 || strcmp(cached_uri, a->verification_uri) != 0) {
+            snprintf(cached_code, sizeof(cached_code), "%s", a->user_code);
+            snprintf(cached_uri, sizeof(cached_uri), "%s", a->verification_uri);
+            auth_qr_valid = 0;
+            char qr_payload[512];
+            if (x4_auth_qr_payload(a->verification_uri, a->user_code, qr_payload, sizeof(qr_payload))) {
+                auth_qr_valid = qrcodegen_encodeText(qr_payload, auth_qr_temp, auth_qr_cdata,
+                    qrcodegen_Ecc_MEDIUM, qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+                    qrcodegen_Mask_AUTO, false) ? 1 : 0;
+            }
+        }
+
+        if (auth_qr_valid) {
+            int qr_size = qrcodegen_getSize(auth_qr_cdata);
+            int margin = 4;
+            int total_modules = qr_size + margin * 2;
+            int target_px = 320;
+            int mod_px = target_px / total_modules;
+            if (mod_px < 1) mod_px = 1;
+            int box_px = total_modules * mod_px;
+            int qr_x = 84 + 1752 - 80 - box_px;
+            int qr_y = 400 + (424 - box_px - 36) / 2;
+            x4_rect(p, qr_x, qr_y, box_px, box_px, 0xffffffffu);
+            for (int my = 0; my < qr_size; ++my) {
+                for (int mx = 0; mx < qr_size; ++mx) {
+                    if (qrcodegen_getModule(auth_qr_cdata, mx, my)) {
+                        x4_rect(p, qr_x + (margin + mx) * mod_px,
+                            qr_y + (margin + my) * mod_px, mod_px, mod_px, 0xff000000u);
+                    }
+                }
+            }
+            const char *scan_label = x4_tr(X4_TR_AUTH_SCAN_PHONE);
+            int text_w = x4_text_width_px(26, 0, scan_label);
+            int text_x = qr_x + (box_px - text_w) / 2;
+            x4_text(p, text_x, qr_y + box_px + 12, 2, scan_label, WHITE);
+        }
     } else {
         const char *title = x4_tr(X4_TR_AUTH_READY);
         switch (a->state) {

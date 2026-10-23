@@ -2,6 +2,7 @@
 #include "http_client.h"
 #include "../core/module.h"
 #include "../ui/lang.h"
+#include "../core/build_identity.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -64,6 +65,8 @@ typedef struct {
     int method; /* native GET 0, POST 1, DELETE 5 */
     const char *url, *payload, *content_type;
     const char *accept;
+    const char *user_agent;
+    uint64_t deadline_us;
     size_t payload_size, header_count, size;
     X4HttpHeader headers[X4_HTTP_HEADERS_MAX];
     char text[];
@@ -554,7 +557,7 @@ static int transfer(X4Http *h, Owned *o, char *body, size_t capacity, size_t *le
     const char *url = o->url, *form = o->payload;
     size_t form_size = o->payload_size;
     int rc;
-    uint64_t deadline = sceKernelGetProcessTime() + X4_HTTP_DEADLINE_USEC;
+    uint64_t deadline = sceKernelGetProcessTime() + (o->deadline_us ? o->deadline_us : X4_HTTP_DEADLINE_USEC);
     int32_t tmpl = -1, conn = -1, req = -1, code = 0;
     size_t total = 0;
 #define CHECKPOINT() do { rc = checkpoint(cancel, deadline); if (rc) goto done; } while (0)
@@ -582,6 +585,8 @@ static int transfer(X4Http *h, Owned *o, char *body, size_t capacity, size_t *le
     CREATE("solicitud HTTPS", req, h->fn.create_request(conn, o->method, url, (uint64_t)form_size));
     OPTION("cabeceras", h->fn.add_header(req, "Accept", o->accept, X4_HTTP_HEADER_OVERWRITE));
     OPTION("cabeceras", h->fn.add_header(req, "Accept-Encoding", "identity", X4_HTTP_HEADER_OVERWRITE));
+    if (o->user_agent)
+        OPTION("cabeceras", h->fn.add_header(req, "User-Agent", o->user_agent, X4_HTTP_HEADER_OVERWRITE));
     if (o->content_type) OPTION("cabeceras", h->fn.add_header(req, "Content-Type",
         o->content_type, X4_HTTP_HEADER_OVERWRITE));
     for (size_t i = 0; i < o->header_count; ++i)
@@ -832,6 +837,46 @@ int x4_http_json_request(X4Http *h, const char *url, const X4HttpHeader *headers
     return rc;
 }
 
+#if X4_PUBLIC
+static const char releases_fixed_url[] = X4_HTTP_RELEASES_URL_PUBLIC;
+#else
+static const char releases_fixed_url[] = X4_HTTP_RELEASES_URL_LAB;
+#endif
+
+static int perform_releases(X4Http *h, const char *url, char *body, size_t capacity,
+    size_t *length, int *status, const _Atomic int *cancel)
+{
+    h->stage = "argumentos HTTPS";
+    if (!url || strcmp(url, releases_fixed_url) != 0) return X4_HTTP_URL;
+    if (!body || capacity == 0 || capacity > X4_HTTP_RELEASES_BODY_MAX + 1 || !length || !status)
+        return X4_HTTP_ARGUMENT;
+    body[0] = 0;
+    *length = 0;
+    *status = 0;
+    if (h->unusable) return X4_HTTP_UNUSABLE;
+    Owned *o = own(X4_HTTP_METHOD_GET, url, NULL, 0, NULL, NULL, 0);
+    if (!o) return X4_HTTP_ALLOCATION;
+    o->accept = "application/vnd.github+json";
+    o->user_agent = "XCloud4/" X4_PRODUCT_VERSION;
+    o->deadline_us = 10ull * 1000 * 1000;
+    return transfer(h, o, body, capacity, length, status, cancel);
+}
+
+int x4_http_releases_request(X4Http *h, const char *url, char *body, size_t capacity,
+    size_t *length, int *status, const _Atomic int *cancel)
+{
+    if (!h) {
+        if (length) *length = 0;
+        if (status) *status = 0;
+        if (body && capacity) body[0] = 0;
+        return X4_HTTP_ARGUMENT;
+    }
+    if (atomic_exchange(&h->busy, true)) return X4_HTTP_BUSY;
+    int rc = perform_releases(h, url, body, capacity, length, status, cancel);
+    atomic_store(&h->busy, false);
+    return rc;
+}
+
 int x4_http_session_request(X4Http *h, enum X4HttpSessionMethod method, const char *url,
     const X4HttpHeader *headers, size_t header_count, const char *json, char *body, size_t capacity,
     size_t *length, int *status, const _Atomic int *cancel)
@@ -984,7 +1029,7 @@ static int transfer_public(X4Http *h, Owned *o, unsigned which, char *body, size
     size_t *length, int *status, const _Atomic int *cancel)
 {
     PublicConnection *slot = &h->public_connection[which];
-    uint64_t deadline = sceKernelGetProcessTime() + X4_HTTP_DEADLINE_USEC;
+    uint64_t deadline = sceKernelGetProcessTime() + (o->deadline_us ? o->deadline_us : X4_HTTP_DEADLINE_USEC);
     h->public_retry_after_ms = 0;
     int rc = 0;
     for (unsigned attempt = 0; attempt < 2; ++attempt) {

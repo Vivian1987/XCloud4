@@ -20,3 +20,4 @@ void x4_live_status_draw(const X4LiveMediaSnapshot *media, int error, uint32_t *
 void x4_touch_menu_draw(const X4TouchMenu *menu, int muted, uint32_t *pixels);
 void x4_live_overlay(const X4LiveMediaSnapshot *media, const X4SessionSnapshot *session, int muted,
                      const X4TouchMenu *touch_menu, bool show_banner, uint32_t *pixels);
+bool x4_auth_qr_payload(const char *uri, const char *code, char *payload_out, size_t cap);
