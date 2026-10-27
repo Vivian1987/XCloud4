@@ -18,6 +18,8 @@ These files are exact upstream copies, not translations or edited license terms.
 | `Opus-BSD-3-Clause.txt` | Opus 1.5.2 `COPYING` | `01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551` |
 | `stb_image-MIT.txt` | Selected MIT alternative, stb `5736b15f7ea0ffb08dd38af21067c314d6a3aae9` | `349ae087e598496e4f3d7444c2e8dff398c9c622108f847fa1f78187270d0739` |
 | `NotoSans-OFL.txt` | Official Noto `LICENSE`, `ffebf8c1ee449e544955a7e813c54f9b73848eac` | `0dab92d0544f7b233403f14b84a663bdbfa746982eda629e7f4f9ffe1b036feb` |
+| `Inter-OFL.txt` | Official Inter v4.0 `LICENSE.txt`, `Inter-4.0.zip` | `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a` |
+| `Tabler-Icons-MIT.txt` | Official Tabler Icons `LICENSE`, tag `v3.24.0` | `d5a3f948ae5cb95bfc4d2f767ef2bf6a778815b0ddb2d1c48037744cf636518e` |
 
 The general [OpenOrbis GPL-3.0 text](OpenOrbis-GPL-3.0.txt) and LLVM [libc++](LLVM-libcxx-11-LICENSE.TXT)/[libc++abi](LLVM-libcxxabi-11-LICENSE.TXT) notices are also retained. The Mbed TLS file includes both full licenses because upstream offers **Apache-2.0 OR GPL-2.0-or-later**. Its bundled Everest/p256-m directories have no separate `LICENSE` file in this checkout; exact READMEs establish their applicable license and attribution.
 

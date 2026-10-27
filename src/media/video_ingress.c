@@ -3,11 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef X4_INGRESS_HOST_TEST
+#include <time.h>
 extern uint64_t x4_ingress_test_now_us(void);
 #define ingress_now x4_ingress_test_now_us
+static inline void ingress_usleep(unsigned us)
+{
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = (long)us * 1000L };
+    nanosleep(&ts, NULL);
+}
 #else
 #include <orbis/libkernel.h>
 #define ingress_now sceKernelGetProcessTime
+#define ingress_usleep(us) sceKernelUsleep(us)
 #endif
 #ifdef X4_INGRESS_TEST_HOOKS
 #define HOOK(q, event, pos) x4_ingress_test_hook(q, event, pos)
@@ -192,6 +199,45 @@ size_t x4_video_ingress_pop(X4VideoIngress *q, uint8_t *out, uint64_t *arrival)
 { return x4_video_ingress_pop_ticket(q, out, arrival, NULL); }
 void x4_video_ingress_stop(X4VideoIngress *q)
 { if (q) atomic_store_explicit(&q->accepting, false, memory_order_release); }
+bool x4_video_ingress_quiesce_reset(X4VideoIngress *q, bool resume_accepting)
+{
+    if (!q || !q->capacity) return false;
+    x4_video_ingress_stop(q);
+    atomic_thread_fence(memory_order_seq_cst);
+    bool drained = false;
+    for (unsigned i = 0; i < 50; ++i) {
+        if (atomic_load_explicit(&q->active_ops, memory_order_acquire) == 0) {
+            drained = true;
+            break;
+        }
+        ingress_usleep(100);
+    }
+    if (!drained && atomic_load_explicit(&q->active_ops, memory_order_acquire) == 0) {
+        drained = true;
+    }
+    if (!drained) {
+        if (resume_accepting) {
+            atomic_store_explicit(&q->accepting, true, memory_order_release);
+        }
+        return false;
+    }
+    uint64_t pos = atomic_load_explicit(&q->enqueue, memory_order_acquire);
+    atomic_store_explicit(&q->dequeue, pos, memory_order_release);
+    for (uint32_t i = 0; i < q->capacity; ++i) {
+        atomic_store_explicit(&q->slots[i].ready, false, memory_order_release);
+        atomic_store_explicit(&q->slots[i].arrival_us, 0, memory_order_relaxed);
+    }
+    pos = atomic_load_explicit(&q->enqueue, memory_order_acquire);
+    atomic_store_explicit(&q->dequeue, pos, memory_order_release);
+    if (resume_accepting) {
+        atomic_store_explicit(&q->accepting, true, memory_order_release);
+    }
+    return true;
+}
+void x4_video_ingress_reset(X4VideoIngress *q)
+{
+    (void)x4_video_ingress_quiesce_reset(q, true);
+}
 bool x4_video_ingress_free(X4VideoIngress *q)
 {
     if (!q) return true;

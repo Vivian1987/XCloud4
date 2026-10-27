@@ -348,6 +348,146 @@ static uint32_t scalar_pixel(unsigned y, unsigned u, unsigned v)
     unsigned b = clamp_channel((298*c + 516*d + 128) >> 8);
     return 0xff000000u | b << 16 | g << 8 | r;
 }
+
+#if !X4_PIPELINE_SSE2
+static inline uint32_t blend_argb(uint32_t c0, uint32_t c1, unsigned w0, unsigned w1)
+{
+    unsigned b0 = c0 & 0xff, g0 = (c0 >> 8) & 0xff, r0 = (c0 >> 16) & 0xff, a0 = (c0 >> 24) & 0xff;
+    unsigned b1 = c1 & 0xff, g1 = (c1 >> 8) & 0xff, r1 = (c1 >> 16) & 0xff, a1 = (c1 >> 24) & 0xff;
+    unsigned b = (b0 * w0 + b1 * w1 + 128) >> 8;
+    unsigned g = (g0 * w0 + g1 * w1 + 128) >> 8;
+    unsigned r = (r0 * w0 + r1 * w1 + 128) >> 8;
+    unsigned a = (a0 * w0 + a1 * w1 + 128) >> 8;
+    return (a << 24) | (r << 16) | (g << 8) | b;
+}
+static inline void scale_row_1280_to_1920_scalar(uint32_t *dst, const uint32_t *src)
+{
+    for (unsigned k = 0; k < 640; ++k) {
+        uint32_t s0 = src[2 * k];
+        uint32_t s1 = src[2 * k + 1];
+        uint32_t s2 = (2 * k + 2 < 1280) ? src[2 * k + 2] : s1;
+        dst[3 * k + 0] = s0;
+        dst[3 * k + 1] = blend_argb(s0, s1, 85, 171);
+        dst[3 * k + 2] = blend_argb(s1, s2, 171, 85);
+    }
+}
+static inline void blend_rows_1280_scalar(uint32_t *dst, const uint32_t *r0, const uint32_t *r1,
+    unsigned w0, unsigned w1)
+{
+    for (unsigned x = 0; x < 1280; ++x) {
+        dst[x] = blend_argb(r0[x], r1[x], w0, w1);
+    }
+}
+#endif
+#if X4_PIPELINE_SSE2
+static inline __m128i blend_4px_sse2(__m128i c0, __m128i c1, __m128i w0, __m128i w1,
+    __m128i zero, __m128i round)
+{
+    __m128i c0_lo = _mm_unpacklo_epi8(c0, zero);
+    __m128i c1_lo = _mm_unpacklo_epi8(c1, zero);
+    __m128i s_lo = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_mullo_epi16(c0_lo, w0),
+        _mm_mullo_epi16(c1_lo, w1)), round), 8);
+    __m128i c0_hi = _mm_unpackhi_epi8(c0, zero);
+    __m128i c1_hi = _mm_unpackhi_epi8(c1, zero);
+    __m128i s_hi = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_mullo_epi16(c0_hi, w0),
+        _mm_mullo_epi16(c1_hi, w1)), round), 8);
+    return _mm_packus_epi16(s_lo, s_hi);
+}
+static void scale_row_1280_to_1920_sse2(uint32_t *dst, const uint32_t *src)
+{
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i round = _mm_set1_epi16(128);
+    const __m128i w85 = _mm_set1_epi16(85);
+    const __m128i w171 = _mm_set1_epi16(171);
+
+    for (unsigned x = 0; x < 1280; x += 8) {
+        __m128i s_lo = _mm_loadu_si128((const __m128i *)(src + x));
+        __m128i s_hi = _mm_loadu_si128((const __m128i *)(src + x + 4));
+
+        __m128i E = (__m128i)_mm_shuffle_ps((__m128)s_lo, (__m128)s_hi, _MM_SHUFFLE(2, 0, 2, 0));
+        __m128i O = (__m128i)_mm_shuffle_ps((__m128)s_lo, (__m128)s_hi, _MM_SHUFFLE(3, 1, 3, 1));
+
+        uint32_t s8 = (x + 8 < 1280) ? src[x + 8] : src[1279];
+        __m128i s8_v = _mm_cvtsi32_si128(s8);
+        __m128i E_shift = _mm_srli_si128(E, 4);
+        __m128i high_pair = _mm_unpacklo_epi32(_mm_srli_si128(E, 12), s8_v);
+        __m128i Enext = _mm_unpacklo_epi64(E_shift, high_pair);
+
+        __m128i B1 = blend_4px_sse2(E, O, w85, w171, zero, round);
+        __m128i B2 = blend_4px_sse2(O, Enext, w171, w85, zero, round);
+
+        __m128i EB1_lo = _mm_unpacklo_epi32(E, B1);
+        __m128i EB1_hi = _mm_unpackhi_epi32(E, B1);
+
+        __m128i out0 = (__m128i)_mm_shuffle_ps((__m128)EB1_lo,
+            (__m128)_mm_unpacklo_epi32(B2, _mm_srli_si128(EB1_lo, 8)),
+            _MM_SHUFFLE(1, 0, 1, 0));
+
+        __m128i b11_b21 = _mm_unpacklo_epi32(_mm_srli_si128(EB1_lo, 12), _mm_srli_si128(B2, 4));
+        __m128i out1 = (__m128i)_mm_shuffle_ps((__m128)b11_b21, (__m128)EB1_hi, _MM_SHUFFLE(1, 0, 1, 0));
+
+        __m128i b22_e3 = _mm_unpacklo_epi32(_mm_srli_si128(B2, 8), _mm_srli_si128(EB1_hi, 8));
+        __m128i b13_b23 = _mm_unpacklo_epi32(_mm_srli_si128(EB1_hi, 12), _mm_srli_si128(B2, 12));
+        __m128i out2 = (__m128i)_mm_shuffle_ps((__m128)b22_e3, (__m128)b13_b23, _MM_SHUFFLE(1, 0, 1, 0));
+
+        uint32_t *out = dst + x * 3 / 2;
+        _mm_storeu_si128((__m128i *)out, out0);
+        _mm_storeu_si128((__m128i *)(out + 4), out1);
+        _mm_storeu_si128((__m128i *)(out + 8), out2);
+    }
+}
+static void blend_rows_1280_sse2(uint32_t *dst, const uint32_t *r0, const uint32_t *r1,
+    unsigned w0, unsigned w1)
+{
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i round = _mm_set1_epi16(128);
+    const __m128i w0_vec = _mm_set1_epi16((short)w0);
+    const __m128i w1_vec = _mm_set1_epi16((short)w1);
+
+    for (unsigned x = 0; x < 1280; x += 4) {
+        __m128i c0 = _mm_loadu_si128((const __m128i *)(r0 + x));
+        __m128i c1 = _mm_loadu_si128((const __m128i *)(r1 + x));
+        __m128i res = blend_4px_sse2(c0, c1, w0_vec, w1_vec, zero, round);
+        _mm_storeu_si128((__m128i *)(dst + x), res);
+    }
+}
+#endif
+static inline void scale_row_1280_to_1920(uint32_t *dst, const uint32_t *src)
+{
+#if X4_PIPELINE_SSE2
+    scale_row_1280_to_1920_sse2(dst, src);
+#else
+    scale_row_1280_to_1920_scalar(dst, src);
+#endif
+}
+static inline void blend_rows_1280(uint32_t *dst, const uint32_t *r0, const uint32_t *r1,
+    unsigned w0, unsigned w1)
+{
+#if X4_PIPELINE_SSE2
+    blend_rows_1280_sse2(dst, r0, r1, w0, w1);
+#else
+    blend_rows_1280_scalar(dst, r0, r1, w0, w1);
+#endif
+}
+static inline unsigned scalar_sharpen_luma(const uint8_t *y_plane, unsigned pitch,
+    unsigned crop_x, unsigned crop_y, unsigned visible_w, unsigned visible_h,
+    unsigned sx, unsigned sy, unsigned level)
+{
+    unsigned y_center = y_plane[(size_t)(crop_y + sy) * pitch + crop_x + sx];
+    if (!level) return y_center;
+    unsigned sy_up = (sy > 0) ? sy - 1 : 0;
+    unsigned sy_down = (sy < visible_h - 1) ? sy + 1 : sy;
+    unsigned sx_left = (sx > 0) ? sx - 1 : 0;
+    unsigned sx_right = (sx < visible_w - 1) ? sx + 1 : sx;
+    unsigned y_up = y_plane[(size_t)(crop_y + sy_up) * pitch + crop_x + sx];
+    unsigned y_down = y_plane[(size_t)(crop_y + sy_down) * pitch + crop_x + sx];
+    unsigned y_left = y_plane[(size_t)(crop_y + sy) * pitch + crop_x + sx_left];
+    unsigned y_right = y_plane[(size_t)(crop_y + sy) * pitch + crop_x + sx_right];
+    int delta = (int)(4 * y_center) - (int)y_up - (int)y_down - (int)y_left - (int)y_right;
+    int adj = (level == 1) ? ((delta + 8) >> 4) : ((delta + 4) >> 3);
+    int val = (int)y_center + adj;
+    return (val < 0) ? 0 : ((val > 255) ? 255 : (unsigned)val);
+}
 #if X4_PIPELINE_SSE2
 /* Same BT.601 integer math, saturation and byte order as live_h264.c. Only
  * register-sized blocks exist; there is no intermediate NV12/RGB image. */
@@ -399,11 +539,221 @@ static void convert_row_sse2(uint32_t *dst, const uint8_t *y, const uint8_t *uv,
         }
     }
 }
+static void chroma_vertical_row_sse2(uint8_t *c_vert, const uint8_t *uv_j,
+    const uint8_t *uv_other, unsigned width)
+{
+    const __m128i zero = _mm_setzero_si128(), two = _mm_set1_epi16(2);
+    for (unsigned x = 0; x < width; x += 16) {
+        __m128i a = _mm_loadu_si128((const __m128i *)(uv_j + x));
+        __m128i b = _mm_loadu_si128((const __m128i *)(uv_other + x));
+        __m128i a_lo = _mm_unpacklo_epi8(a, zero);
+        __m128i b_lo = _mm_unpacklo_epi8(b, zero);
+        __m128i sum_lo = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_slli_epi16(a_lo, 1), a_lo),
+            _mm_add_epi16(b_lo, two)), 2);
+        __m128i a_hi = _mm_unpackhi_epi8(a, zero);
+        __m128i b_hi = _mm_unpackhi_epi8(b, zero);
+        __m128i sum_hi = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_slli_epi16(a_hi, 1), a_hi),
+            _mm_add_epi16(b_hi, two)), 2);
+        __m128i res = _mm_packus_epi16(sum_lo, sum_hi);
+        _mm_storeu_si128((__m128i *)(c_vert + x), res);
+    }
+}
+static inline __m128i sharpen_luma_sse2(const uint8_t *y_plane, unsigned pitch,
+    unsigned crop_x, unsigned crop_y, unsigned visible_w, unsigned visible_h,
+    unsigned sx, unsigned sy, unsigned level, __m128i ybias)
+{
+    const __m128i zero = _mm_setzero_si128();
+    const uint8_t *y_row = y_plane + (size_t)(crop_y + sy) * pitch + crop_x;
+    __m128i center_raw = _mm_loadl_epi64((const __m128i *)(y_row + sx));
+    if (!level) {
+        return _mm_sub_epi16(_mm_unpacklo_epi8(center_raw, zero), ybias);
+    }
+    unsigned sy_up = (sy > 0) ? sy - 1 : 0;
+    unsigned sy_down = (sy < visible_h - 1) ? sy + 1 : sy;
+    const uint8_t *y_up_row = y_plane + (size_t)(crop_y + sy_up) * pitch + crop_x;
+    const uint8_t *y_down_row = y_plane + (size_t)(crop_y + sy_down) * pitch + crop_x;
+    __m128i up_raw = _mm_loadl_epi64((const __m128i *)(y_up_row + sx));
+    __m128i down_raw = _mm_loadl_epi64((const __m128i *)(y_down_row + sx));
+
+    __m128i left_raw, right_raw;
+    if (sx > 0 && sx + 8 < visible_w) {
+        left_raw = _mm_loadl_epi64((const __m128i *)(y_row + sx - 1));
+        right_raw = _mm_loadl_epi64((const __m128i *)(y_row + sx + 1));
+    } else {
+        uint8_t left_bytes[8], right_bytes[8];
+        for (int k = 0; k < 8; ++k) {
+            unsigned px = sx + (unsigned)k;
+            left_bytes[k] = (px > 0) ? y_row[px - 1] : y_row[0];
+            right_bytes[k] = (px < visible_w - 1) ? y_row[px + 1] : y_row[visible_w - 1];
+        }
+        left_raw = _mm_loadl_epi64((const __m128i *)left_bytes);
+        right_raw = _mm_loadl_epi64((const __m128i *)right_bytes);
+    }
+
+    __m128i c16 = _mm_unpacklo_epi8(center_raw, zero);
+    __m128i u16 = _mm_unpacklo_epi8(up_raw, zero);
+    __m128i d16 = _mm_unpacklo_epi8(down_raw, zero);
+    __m128i l16 = _mm_unpacklo_epi8(left_raw, zero);
+    __m128i r16 = _mm_unpacklo_epi8(right_raw, zero);
+
+    __m128i delta = _mm_sub_epi16(_mm_sub_epi16(_mm_slli_epi16(c16, 2), _mm_add_epi16(u16, d16)),
+        _mm_add_epi16(l16, r16));
+    __m128i round = (level == 1) ? _mm_set1_epi16(8) : _mm_set1_epi16(4);
+    int shift = (level == 1) ? 4 : 3;
+    __m128i adj = _mm_srai_epi16(_mm_add_epi16(delta, round), shift);
+    __m128i sharp = _mm_add_epi16(c16, adj);
+    __m128i clamped = _mm_packus_epi16(sharp, zero);
+    return _mm_sub_epi16(_mm_unpacklo_epi8(clamped, zero), ybias);
+}
+#if defined(X4_CONVERT_LEGACY_SMOOTH) && X4_CONVERT_LEGACY_SMOOTH
+static inline void convert_row_smooth_sse2(uint32_t *dst, const uint8_t *source,
+    size_t uv_plane_offset, unsigned pitch, unsigned visible_w, unsigned visible_h,
+    unsigned sy)
+{
+    unsigned j_max = (visible_h / 2) - 1;
+    unsigned j = sy / 2;
+    unsigned j_other = ((sy & 1) == 0) ? ((j > 0) ? j - 1 : 0) : ((j < j_max) ? j + 1 : j);
+
+    const uint8_t *y_plane = source;
+    const uint8_t *uv_j = source + uv_plane_offset + (size_t)j * pitch;
+    const uint8_t *uv_other = source + uv_plane_offset + (size_t)j_other * pitch;
+
+    uint8_t c_vert[1928];
+    chroma_vertical_row_sse2(c_vert, uv_j, uv_other, visible_w);
+    c_vert[visible_w] = c_vert[visible_w - 2];
+    c_vert[visible_w + 1] = c_vert[visible_w - 1];
+    c_vert[visible_w + 2] = c_vert[visible_w - 2];
+    c_vert[visible_w + 3] = c_vert[visible_w - 1];
+
+    const __m128i zero = _mm_setzero_si128(), ybias = _mm_set1_epi16(16), uvbias = _mm_set1_epi16(128);
+
+    for (unsigned x = 0; x < visible_w; x += 8) {
+        __m128i center_raw = _mm_loadl_epi64((const __m128i *)(y_plane + (size_t)sy * pitch + x));
+        __m128i luma = _mm_subs_epu16(_mm_unpacklo_epi8(center_raw, zero), ybias);
+
+        __m128i cur = _mm_loadu_si128((const __m128i *)(c_vert + x));
+        __m128i nxt = _mm_srli_si128(cur, 2);
+        __m128i avg = _mm_avg_epu8(cur, nxt);
+        __m128i pairs = _mm_unpacklo_epi16(cur, avg);
+        __m128i u = _mm_sub_epi16(_mm_and_si128(pairs, _mm_set1_epi16(0x00ff)), uvbias);
+        __m128i v = _mm_sub_epi16(_mm_srli_epi16(pairs, 8), uvbias);
+
+        __m128i first, second;
+        rgb_eight(luma, u, v, &first, &second);
+        _mm_storeu_si128((__m128i *)(dst + x), first);
+        _mm_storeu_si128((__m128i *)(dst + x + 4), second);
+    }
+}
+#endif
+#endif
+
+#if defined(X4_CONVERT_LEGACY_SMOOTH) && X4_CONVERT_LEGACY_SMOOTH
+static inline void convert_row_smooth_scalar(uint32_t *dst, const uint8_t *source,
+    size_t uv_plane_offset, unsigned pitch, unsigned visible_w, unsigned visible_h,
+    unsigned sy)
+{
+    unsigned j_max = (visible_h / 2) - 1;
+    unsigned j = sy / 2;
+    unsigned j_other = ((sy & 1) == 0) ? ((j > 0) ? j - 1 : 0) : ((j < j_max) ? j + 1 : j);
+
+    const uint8_t *y_plane = source;
+    const uint8_t *uv_j = source + uv_plane_offset + (size_t)j * pitch;
+    const uint8_t *uv_other = source + uv_plane_offset + (size_t)j_other * pitch;
+
+    for (unsigned sx = 0; sx < visible_w; ++sx) {
+        unsigned y_val = y_plane[(size_t)sy * pitch + sx];
+        unsigned i = sx / 2;
+        unsigned i_next = (i < (visible_w / 2) - 1) ? i + 1 : i;
+
+        unsigned u_vi = (3u * uv_j[2 * i] + uv_other[2 * i] + 2u) >> 2;
+        unsigned v_vi = (3u * uv_j[2 * i + 1] + uv_other[2 * i + 1] + 2u) >> 2;
+
+        unsigned u_final, v_final;
+        if ((sx & 1) == 0) {
+            u_final = u_vi;
+            v_final = v_vi;
+        } else {
+            unsigned u_vnext = (3u * uv_j[2 * i_next] + uv_other[2 * i_next] + 2u) >> 2;
+            unsigned v_vnext = (3u * uv_j[2 * i_next + 1] + uv_other[2 * i_next + 1] + 2u) >> 2;
+            u_final = (u_vi + u_vnext + 1u) >> 1;
+            v_final = (v_vi + v_vnext + 1u) >> 1;
+        }
+        dst[sx] = scalar_pixel(y_val, u_final, v_final);
+    }
+}
 #endif
 static void convert_rows(const X4VideoNv12Layout *l, const uint8_t *source,
     uint32_t *dst, unsigned dst_width, unsigned dst_height, unsigned dst_pitch,
     unsigned first_row, unsigned end_row)
 {
+#if defined(X4_CONVERT_LEGACY_SMOOTH) && X4_CONVERT_LEGACY_SMOOTH
+    if (l->visible_width == 1920 && dst_width == 1920 && dst_height == 1080) {
+        for (unsigned dy = first_row; dy < end_row; ++dy) {
+            uint32_t *row = dst + (size_t)dy * dst_pitch;
+#if X4_PIPELINE_SSE2
+            convert_row_smooth_sse2(row, source, l->uv_plane_offset, l->pitch, 1920, 1080, dy);
+#else
+            convert_row_smooth_scalar(row, source, l->uv_plane_offset, l->pitch, 1920, 1080, dy);
+#endif
+        }
+        return;
+    } else if (l->visible_width == 1280 && l->visible_height == 720 && dst_width == 1920 && dst_height == 1080) {
+        uint32_t rgb_rows[3][1280];
+        uint32_t rgb_blend[1280];
+        int cached_sy[3] = {-1, -1, -1};
+        unsigned m_start = first_row / 3;
+        unsigned m_end = (end_row + 2) / 3;
+        for (unsigned m = m_start; m < m_end; ++m) {
+            unsigned sy0 = 2 * m;
+            unsigned sy1 = 2 * m + 1;
+            unsigned sy2 = (2 * m + 2 < 720) ? (2 * m + 2) : 719;
+
+            unsigned slot0 = sy0 % 3;
+            if (cached_sy[slot0] != (int)sy0) {
+#if X4_PIPELINE_SSE2
+                convert_row_smooth_sse2(rgb_rows[slot0], source, l->uv_plane_offset, l->pitch, 1280, 720, sy0);
+#else
+                convert_row_smooth_scalar(rgb_rows[slot0], source, l->uv_plane_offset, l->pitch, 1280, 720, sy0);
+#endif
+                cached_sy[slot0] = (int)sy0;
+            }
+            unsigned slot1 = sy1 % 3;
+            if (cached_sy[slot1] != (int)sy1) {
+#if X4_PIPELINE_SSE2
+                convert_row_smooth_sse2(rgb_rows[slot1], source, l->uv_plane_offset, l->pitch, 1280, 720, sy1);
+#else
+                convert_row_smooth_scalar(rgb_rows[slot1], source, l->uv_plane_offset, l->pitch, 1280, 720, sy1);
+#endif
+                cached_sy[slot1] = (int)sy1;
+            }
+            unsigned slot2 = sy2 % 3;
+            if (cached_sy[slot2] != (int)sy2) {
+#if X4_PIPELINE_SSE2
+                convert_row_smooth_sse2(rgb_rows[slot2], source, l->uv_plane_offset, l->pitch, 1280, 720, sy2);
+#else
+                convert_row_smooth_scalar(rgb_rows[slot2], source, l->uv_plane_offset, l->pitch, 1280, 720, sy2);
+#endif
+                cached_sy[slot2] = (int)sy2;
+            }
+
+            unsigned dy0 = 3 * m;
+            if (dy0 >= first_row && dy0 < end_row) {
+                scale_row_1280_to_1920(dst + (size_t)dy0 * dst_pitch, rgb_rows[slot0]);
+            }
+            unsigned dy1 = 3 * m + 1;
+            if (dy1 >= first_row && dy1 < end_row) {
+                blend_rows_1280(rgb_blend, rgb_rows[slot0], rgb_rows[slot1], 85, 171);
+                scale_row_1280_to_1920(dst + (size_t)dy1 * dst_pitch, rgb_blend);
+            }
+            unsigned dy2 = 3 * m + 2;
+            if (dy2 >= first_row && dy2 < end_row) {
+                blend_rows_1280(rgb_blend, rgb_rows[slot1], rgb_rows[slot2], 171, 85);
+                scale_row_1280_to_1920(dst + (size_t)dy2 * dst_pitch, rgb_blend);
+            }
+        }
+        return;
+    }
+#endif
     for (unsigned dy = first_row; dy < end_row; ++dy) {
         unsigned sy = dy * l->visible_height / dst_height;
         const uint8_t *y = source + (size_t)sy * l->pitch;
@@ -567,12 +917,192 @@ static void color_row_sse2(uint32_t *dst, const uint8_t *y, const uint8_t *uv,
         }
     }
 }
+static void color_row_smooth_sse2(uint32_t *dst, const uint8_t *source,
+    size_t uv_plane_offset, unsigned pitch, unsigned crop_x, unsigned crop_y,
+    unsigned visible_w, unsigned visible_h, unsigned sy,
+    const ColorCoefficients *m, unsigned sharpness)
+{
+    unsigned j_min = crop_y / 2;
+    unsigned j_max = crop_y / 2 + (visible_h / 2) - 1;
+    unsigned j = (crop_y + sy) / 2;
+    unsigned j_other = ((sy & 1) == 0) ? ((j > j_min) ? j - 1 : j) : ((j < j_max) ? j + 1 : j);
+
+    const uint8_t *y_plane = source;
+    const uint8_t *uv_j = source + uv_plane_offset + (size_t)j * pitch + (crop_x & ~1u);
+    const uint8_t *uv_other = source + uv_plane_offset + (size_t)j_other * pitch + (crop_x & ~1u);
+
+    uint8_t c_vert[1928];
+    chroma_vertical_row_sse2(c_vert, uv_j, uv_other, visible_w);
+    c_vert[visible_w] = c_vert[visible_w - 2];
+    c_vert[visible_w + 1] = c_vert[visible_w - 1];
+    c_vert[visible_w + 2] = c_vert[visible_w - 2];
+    c_vert[visible_w + 3] = c_vert[visible_w - 1];
+
+    const __m128i ybias = _mm_set1_epi16(m->y_bias), uvbias = _mm_set1_epi16(128);
+
+    for (unsigned x = 0; x < visible_w; x += 8) {
+        __m128i luma = sharpen_luma_sse2(y_plane, pitch, crop_x, crop_y, visible_w, visible_h,
+            x, sy, sharpness, ybias);
+
+        __m128i cur = _mm_loadu_si128((const __m128i *)(c_vert + x));
+        __m128i nxt = _mm_srli_si128(cur, 2);
+        __m128i avg = _mm_avg_epu8(cur, nxt);
+        __m128i pairs = _mm_unpacklo_epi16(cur, avg);
+        __m128i u = _mm_sub_epi16(_mm_and_si128(pairs, _mm_set1_epi16(0x00ff)), uvbias);
+        __m128i v = _mm_sub_epi16(_mm_srli_epi16(pairs, 8), uvbias);
+
+        __m128i first, second;
+        color_rgb_eight(luma, u, v, m, &first, &second);
+        _mm_storeu_si128((__m128i *)(dst + x), first);
+        _mm_storeu_si128((__m128i *)(dst + x + 4), second);
+    }
+}
 #endif
+static void color_row_smooth_scalar(uint32_t *dst, const uint8_t *source,
+    size_t uv_plane_offset, unsigned pitch, unsigned crop_x, unsigned crop_y,
+    unsigned visible_w, unsigned visible_h, unsigned sy,
+    const ColorCoefficients *m, unsigned sharpness)
+{
+    unsigned j_min = crop_y / 2;
+    unsigned j_max = crop_y / 2 + (visible_h / 2) - 1;
+    unsigned j = (crop_y + sy) / 2;
+    unsigned j_other = ((sy & 1) == 0) ? ((j > j_min) ? j - 1 : j) : ((j < j_max) ? j + 1 : j);
+
+    const uint8_t *y_plane = source;
+    const uint8_t *uv_j = source + uv_plane_offset + (size_t)j * pitch + (crop_x & ~1u);
+    const uint8_t *uv_other = source + uv_plane_offset + (size_t)j_other * pitch + (crop_x & ~1u);
+
+    for (unsigned sx = 0; sx < visible_w; ++sx) {
+        unsigned y_val = scalar_sharpen_luma(y_plane, pitch, crop_x, crop_y, visible_w, visible_h,
+            sx, sy, sharpness);
+        unsigned i = sx / 2;
+        unsigned i_next = (i < (visible_w / 2) - 1) ? i + 1 : i;
+
+        unsigned u_vi = (3u * uv_j[2 * i] + uv_other[2 * i] + 2u) >> 2;
+        unsigned v_vi = (3u * uv_j[2 * i + 1] + uv_other[2 * i + 1] + 2u) >> 2;
+
+        unsigned u_final, v_final;
+        if ((sx & 1) == 0) {
+            u_final = u_vi;
+            v_final = v_vi;
+        } else {
+            unsigned u_vnext = (3u * uv_j[2 * i_next] + uv_other[2 * i_next] + 2u) >> 2;
+            unsigned v_vnext = (3u * uv_j[2 * i_next + 1] + uv_other[2 * i_next + 1] + 2u) >> 2;
+            u_final = (u_vi + u_vnext + 1u) >> 1;
+            v_final = (v_vi + v_vnext + 1u) >> 1;
+        }
+        dst[sx] = color_scalar_pixel(y_val, u_final, v_final, m);
+    }
+}
+typedef struct {
+    uint32_t rows[3][1280];
+    uint32_t blend[1280];
+} ConverterScalingBuffer;
+
+static ConverterScalingBuffer s_scale_buf[3];
+
 static void color_convert_rows(const X4VideoNv12Layout *l, const uint8_t *source,
     uint32_t *dst, unsigned width, unsigned height, unsigned pitch,
     unsigned first_row, unsigned end_row, unsigned crop_x, unsigned crop_y,
-    const ColorCoefficients *m)
+    const ColorCoefficients *m, const X4VideoPipelineColor *color, unsigned worker_index)
 {
+    unsigned convert_mode = color ? color->convert_mode : 0;
+    unsigned sharpness = color ? color->sharpness : 0;
+
+    if (convert_mode == X4_CONVERT_SMOOTH) {
+#if X4_PIPELINE_SSE2
+        bool sse2_fast = color_fast_geometry(l, crop_x, crop_y);
+#endif
+        if (width == l->visible_width && height == l->visible_height) {
+            for (unsigned dy = first_row; dy < end_row; ++dy) {
+                uint32_t *row = dst + (size_t)dy * pitch;
+#if X4_PIPELINE_SSE2
+                if (sse2_fast) {
+                    color_row_smooth_sse2(row, source, l->uv_plane_offset, l->pitch,
+                        crop_x, crop_y, l->visible_width, l->visible_height, dy, m, sharpness);
+                    continue;
+                }
+#endif
+                color_row_smooth_scalar(row, source, l->uv_plane_offset, l->pitch,
+                    crop_x, crop_y, l->visible_width, l->visible_height, dy, m, sharpness);
+            }
+            return;
+        } else if (l->visible_width == 1280 && l->visible_height == 720 && width == 1920 && height == 1080) {
+            ConverterScalingBuffer *sb = &s_scale_buf[worker_index < 3 ? worker_index : 0];
+            uint32_t (*rgb_rows)[1280] = sb->rows;
+            uint32_t *rgb_blend = sb->blend;
+            int cached_sy[3] = {-1, -1, -1};
+            unsigned m_start = first_row / 3;
+            unsigned m_end = (end_row + 2) / 3;
+            for (unsigned group = m_start; group < m_end; ++group) {
+                unsigned sy0 = 2 * group;
+                unsigned sy1 = 2 * group + 1;
+                unsigned sy2 = (2 * group + 2 < 720) ? (2 * group + 2) : 719;
+
+                unsigned slot0 = sy0 % 3;
+                if (cached_sy[slot0] != (int)sy0) {
+#if X4_PIPELINE_SSE2
+                    if (sse2_fast) {
+                        color_row_smooth_sse2(rgb_rows[slot0], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy0, m, sharpness);
+                    } else
+#endif
+                    {
+                        color_row_smooth_scalar(rgb_rows[slot0], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy0, m, sharpness);
+                    }
+                    cached_sy[slot0] = (int)sy0;
+                }
+
+                unsigned slot1 = sy1 % 3;
+                if (cached_sy[slot1] != (int)sy1) {
+#if X4_PIPELINE_SSE2
+                    if (sse2_fast) {
+                        color_row_smooth_sse2(rgb_rows[slot1], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy1, m, sharpness);
+                    } else
+#endif
+                    {
+                        color_row_smooth_scalar(rgb_rows[slot1], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy1, m, sharpness);
+                    }
+                    cached_sy[slot1] = (int)sy1;
+                }
+
+                unsigned slot2 = sy2 % 3;
+                if (cached_sy[slot2] != (int)sy2) {
+#if X4_PIPELINE_SSE2
+                    if (sse2_fast) {
+                        color_row_smooth_sse2(rgb_rows[slot2], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy2, m, sharpness);
+                    } else
+#endif
+                    {
+                        color_row_smooth_scalar(rgb_rows[slot2], source, l->uv_plane_offset, l->pitch,
+                            crop_x, crop_y, 1280, 720, sy2, m, sharpness);
+                    }
+                    cached_sy[slot2] = (int)sy2;
+                }
+
+                unsigned dy0 = 3 * group;
+                if (dy0 >= first_row && dy0 < end_row) {
+                    scale_row_1280_to_1920(dst + (size_t)dy0 * pitch, rgb_rows[slot0]);
+                }
+                unsigned dy1 = 3 * group + 1;
+                if (dy1 >= first_row && dy1 < end_row) {
+                    blend_rows_1280(rgb_blend, rgb_rows[slot0], rgb_rows[slot1], 85, 171);
+                    scale_row_1280_to_1920(dst + (size_t)dy1 * pitch, rgb_blend);
+                }
+                unsigned dy2 = 3 * group + 2;
+                if (dy2 >= first_row && dy2 < end_row) {
+                    blend_rows_1280(rgb_blend, rgb_rows[slot1], rgb_rows[slot2], 171, 85);
+                    scale_row_1280_to_1920(dst + (size_t)dy2 * pitch, rgb_blend);
+                }
+            }
+            return;
+        }
+    }
+
     for (unsigned dy = first_row; dy < end_row; ++dy) {
         unsigned sy = dy * l->visible_height / height;
         const uint8_t *y = source + l->visible_y_offset + (size_t)sy * l->pitch;
@@ -603,7 +1133,7 @@ int x4_video_pipeline_convert_stripe_color(const X4VideoNv12Layout *l,
         validated_destination(source,source_bytes,dst,dst_bytes,1920,1080,pitch))
         return X4_PIPELINE_INVALID;
     ColorCoefficients m = color_coefficients(color);
-    color_convert_rows(l,source,dst,1920,1080,pitch,stripe.first_row,stripe.end_row,cx,cy,&m);
+    color_convert_rows(l,source,dst,1920,1080,pitch,stripe.first_row,stripe.end_row,cx,cy,&m,color,index);
 #if defined(__SSE2__)
     _mm_sfence();
 #endif
@@ -619,6 +1149,6 @@ int x4_video_pipeline_convert_reference_color(const X4VideoNv12Layout *l,
             l->visible_width,l->visible_height,l->visible_width)) return X4_PIPELINE_INVALID;
     ColorCoefficients m = color_coefficients(color);
     color_convert_rows(l,source,dst,l->visible_width,l->visible_height,
-        l->visible_width,0,l->visible_height,cx,cy,&m);
+        l->visible_width,0,l->visible_height,cx,cy,&m,color,0);
     return 0;
 }

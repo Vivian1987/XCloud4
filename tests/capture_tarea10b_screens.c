@@ -105,6 +105,7 @@ int main(int argc, char **argv)
     }
 
     /* 3. Auth screen with QR (ES & EN) */
+    X4Screen screen_account = {.page = 4, .selected = 0};
     X4AuthSnapshot auth_snap = {
         .state = X4_AUTH_WAITING,
         .seconds_left = 899,
@@ -115,7 +116,7 @@ int main(int argc, char **argv)
     /* Spanish Auth */
     x4_lang_set(X4_LANG_ES, "es-ES", "ES");
     memset(fb, 0, 1920 * 1080 * sizeof(uint32_t));
-    x4_screen_draw(&screen_home, &ctrl, fb); /* background header */
+    x4_screen_draw(&screen_account, &ctrl, fb);
     x4_auth_draw(&auth_snap, 0, 0, fb);
     snprintf(path, sizeof(path), "%s/auth_qr_es.ppm", out_dir);
     write_ppm(path, fb);
@@ -123,7 +124,7 @@ int main(int argc, char **argv)
     /* English Auth */
     x4_lang_set(X4_LANG_EN, "en-US", "US");
     memset(fb, 0, 1920 * 1080 * sizeof(uint32_t));
-    x4_screen_draw(&screen_home, &ctrl, fb); /* background header */
+    x4_screen_draw(&screen_account, &ctrl, fb);
     x4_auth_draw(&auth_snap, 0, 0, fb);
     snprintf(path, sizeof(path), "%s/auth_qr_en.ppm", out_dir);
     write_ppm(path, fb);

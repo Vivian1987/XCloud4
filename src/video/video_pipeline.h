@@ -137,12 +137,44 @@ int x4_video_pipeline_convert_reference(const X4VideoNv12Layout *,
     const uint8_t *source, size_t source_bytes, uint32_t *destination,
     size_t destination_bytes);
 
+#ifndef X4_CONVERT_SMOOTH_DEFAULT
+#define X4_CONVERT_SMOOTH_DEFAULT 1
+#endif
+#ifndef X4_SHARPNESS_PUBLIC_DEFAULT
+#define X4_SHARPNESS_PUBLIC_DEFAULT 2
+#endif
+
+typedef enum {
+    X4_CONVERT_ORIGINAL = 0,
+    X4_CONVERT_SMOOTH = 1
+} X4VideoConvertMode;
+
+typedef enum {
+    X4_SHARPNESS_OFF = 0,
+    X4_SHARPNESS_LOW = 1,
+    X4_SHARPNESS_MED = 2
+} X4VideoSharpness;
+
 /* Streaming color is selected from the SPS VUI. Matrix 1 is BT.709; 2
  * (unspecified), 5 and 6 retain BT.601 compatibility. Unknown matrix values
  * also use BT.601; the owner must record that assumption. Both limited and
  * full range are implemented. The legacy entry points above keep their
  * original restricted geometry and exact Q8 BT.601 arithmetic. */
-typedef struct { unsigned matrix_coefficients; bool full_range; } X4VideoPipelineColor;
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
+typedef struct {
+    unsigned matrix_coefficients;
+    bool full_range;
+    unsigned char convert_mode;
+    unsigned char sharpness;
+} X4VideoPipelineColor;
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 enum { X4_PIPELINE_CONVERT_SCALAR = 0, X4_PIPELINE_CONVERT_SSE2 = 1 };
 /* Validates progressive 8-bit NV12 storage up to coded 1920x1088. Explicit
  * visible offsets encode cropping; crop coordinates may be odd, in which

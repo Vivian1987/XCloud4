@@ -24,14 +24,16 @@ bool x4_stream_settings_ui_handle(X4StreamSettingsUi *s, unsigned a, bool can_ed
         s->profile = current.profile; s->color = current.color_preference; s->cpu=(X4StreamCpuVariant)current.cpu_variant;
         s->depth=(X4StreamDecoderDepth)current.decoder_depth;
         s->interaction_modes=current.interaction_modes;
+        unsigned char req_mode=current.resolution_request_mode<=2?current.resolution_request_mode:0;
+        s->convert_sharp=(current.convert_mode&1u)|((current.sharpness&3u)<<1)|(req_mode<<3);
         s->row = 0; s->open = true; s->applied = false;
         return true; /* R3+X may open, but cannot confirm or launch. */
     }
     if (a & X4_SETTINGS_CANCEL) { s->open = false; return true; }
     unsigned navigation = a & (X4_SETTINGS_UP | X4_SETTINGS_DOWN | X4_SETTINGS_LEFT | X4_SETTINGS_RIGHT);
     if (navigation) {
-        if (a & X4_SETTINGS_DOWN) s->row=(s->row+1u)%8u;
-        else if(a & X4_SETTINGS_UP) s->row=(s->row+7u)%8u;
+        if (a & X4_SETTINGS_DOWN) s->row=(s->row+1u)%11u; /* (s->row+1u)%8u */
+        else if(a & X4_SETTINGS_UP) s->row=(s->row+10u)%11u; /* (s->row+7u)%8u */
         if (a & (X4_SETTINGS_LEFT | X4_SETTINGS_RIGHT)) {
             if (!s->row) s->profile = profile_order[(profile_ordinal(s->profile) +
                 ((a & X4_SETTINGS_RIGHT) ? 1u : X4_REQUEST_PROFILE_COUNT-1u)) % X4_REQUEST_PROFILE_COUNT];
@@ -42,8 +44,20 @@ bool x4_stream_settings_ui_handle(X4StreamSettingsUi *s, unsigned a, bool can_ed
             else if(s->row==5) s->interaction_modes^=X4_INTERACTION_RUMBLE_OFF;
             else if(s->row==6) s->interaction_modes^=X4_INTERACTION_AUDIO_PREVIOUS;
             else if(s->row==7) s->interaction_modes^=X4_INTERACTION_VSYNC_OFF;
+            else if(s->row==8) s->convert_sharp^=1u;
+            else if(s->row==9) {
+                unsigned cur_sharp=(s->convert_sharp>>1)&3u;
+                unsigned new_sharp=(cur_sharp+((a&X4_SETTINGS_RIGHT)?1u:2u))%3u;
+                s->convert_sharp=(s->convert_sharp&~6u)|(new_sharp<<1);
+            }
+            else if(s->row==10) {
+                unsigned cur_req=(s->convert_sharp>>3)&3u;
+                unsigned new_req=(cur_req+((a&X4_SETTINGS_RIGHT)?1u:2u))%3u;
+                s->convert_sharp=(s->convert_sharp&~24u)|(new_req<<3);
+            }
         }
-    } else if ((a & X4_SETTINGS_CONFIRM) && x4_stream_settings_set_extended(s->profile,s->color,s->cpu,s->depth,s->interaction_modes)) {
+    } else if ((a & X4_SETTINGS_CONFIRM) && x4_stream_settings_set_lab(s->profile,s->color,s->cpu,s->depth,s->interaction_modes,s->convert_sharp&1u,(s->convert_sharp>>1)&3u,(s->convert_sharp>>3)&3u)) {
+        /* x4_stream_settings_set_extended(s->profile,s->color,s->cpu,s->depth,s->interaction_modes) */
         s->applied = true; s->open = false;
     }
     return true;
@@ -81,44 +95,57 @@ void x4_stream_settings_ui_draw(const X4StreamSettingsUi *s, uint32_t *p)
         }
         return;
     }
-    x4_rect(p,270,130,1380,845,bg); border(p,270,130,1380,845,green);
-    text(p,310,182,40,1,"Opciones de la próxima sesión",1290,white);
-    text(p,310,232,26,0,"Se recuerda hasta cerrar XCloud4. Xbox decide qué señal entrega.",1290,muted);
-    text(p,325,276,29,1,"Perfil de solicitud",1250,white);
+    x4_rect(p,270,70,1380,940,bg); border(p,270,70,1380,940,green);
+    text(p,310,105,36,1,"Opciones de la próxima sesión",1290,white);
+    text(p,310,142,22,0,"Se recuerda hasta cerrar XCloud4. Xbox decide qué señal entrega.",1290,muted);
+    text(p,325,175,25,1,"Perfil de solicitud",1250,white);
     const char *profiles[] = {"720p60 · android", "720p-HQ · web windows · alias 720HQ", "1080p-G · web windows · alias 1080",
         "1080p-G8 · igual a G · solicitud 8 Mbps",
         "1080p-H · nativa windows · alias 1080", "1080p-HQ · web windows · alias 1080HQ"};
-    text(p,345,309,27,1,profiles[profile_ordinal(s->profile)],1220,green);
-    if (!s->row) x4_rect(p,300,265,4,74,green);
-    text(p,325,350,29,1,"Color si el SPS no especifica la matriz",1240,white);
-    text(p,345,383,26,0,s->color==X4_COLOR_AUTO_709?
+    text(p,345,201,23,1,profiles[profile_ordinal(s->profile)],1220,green);
+    if (!s->row) x4_rect(p,300,169,4,54,green);
+    text(p,325,233,25,1,"Color si el SPS no especifica la matriz",1240,white);
+    text(p,345,259,23,0,s->color==X4_COLOR_AUTO_709?
         "Automático (BT.709 en 720p o más)":"BT.601",1220,green);
-    if (s->row==1) x4_rect(p,300,339,4,74,green);
-    text(p,325,424,29,1,"CPU de la próxima sesión",1240,white);
+    if (s->row==1) x4_rect(p,300,227,4,54,green);
+    text(p,325,291,25,1,"CPU de la próxima sesión",1240,white);
     const char *cpus[]={"CPU-0 · actual (700)", "CPU-1 · decoder a prioridad 480",
         "CPU-2 · decoder a 480 y núcleos separados", "CPU-3 · decoder a 256 y núcleos separados"};
-    text(p,345,457,26,0,cpus[s->cpu<=X4_CPU_3?s->cpu:X4_CPU_0],1220,green);
-    if(s->row==2)x4_rect(p,300,413,4,74,green);
-    text(p,325,498,29,1,"Profundidad del decoder",1240,white);
+    text(p,345,317,23,0,cpus[s->cpu<=X4_CPU_3?s->cpu:X4_CPU_0],1220,green);
+    if(s->row==2)x4_rect(p,300,285,4,54,green);
+    text(p,325,349,25,1,"Profundidad del decoder",1240,white);
     const char *depths[]={"Profundidad: Auto (720p: 1 · 1080p: 2)","Profundidad: 1","Profundidad: 2"};
-    text(p,345,531,26,0,depths[s->depth<=X4_DEPTH_2?s->depth:X4_DEPTH_AUTO],1220,green);
-    if(s->row==3)x4_rect(p,300,487,4,74,green);
-    text(p,325,572,29,1,"Envío del mando",1240,white);
-    text(p,345,605,26,0,s->interaction_modes&X4_INTERACTION_INPUT_60HZ?
+    text(p,345,375,23,0,depths[s->depth<=X4_DEPTH_2?s->depth:X4_DEPTH_AUTO],1220,green);
+    if(s->row==3)x4_rect(p,300,343,4,54,green);
+    text(p,325,407,25,1,"Envío del mando",1240,white);
+    text(p,345,433,23,0,s->interaction_modes&X4_INTERACTION_INPUT_60HZ?
         "60 Hz (anterior)":"Inmediato",1220,green);
-    if(s->row==4)x4_rect(p,300,561,4,74,green);
-    text(p,325,646,29,1,"Vibración",1240,white);
-    text(p,345,679,26,0,s->interaction_modes&X4_INTERACTION_RUMBLE_OFF?"No":"Sí",1220,green);
-    if(s->row==5)x4_rect(p,300,635,4,74,green);
-    text(p,325,720,29,1,"Audio",1240,white);
-    text(p,345,753,26,0,s->interaction_modes&X4_INTERACTION_AUDIO_PREVIOUS?"Anterior":"Nuevo",1220,green);
-    if(s->row==6)x4_rect(p,300,709,4,74,green);
-    text(p,325,794,29,1,"Sincronía vertical",1240,white);
-    text(p,345,827,26,0,s->interaction_modes&X4_INTERACTION_VSYNC_OFF?
+    if(s->row==4)x4_rect(p,300,401,4,54,green);
+    text(p,325,465,25,1,"Vibración",1240,white);
+    text(p,345,491,23,0,s->interaction_modes&X4_INTERACTION_RUMBLE_OFF?"No":"Sí",1220,green);
+    if(s->row==5)x4_rect(p,300,459,4,54,green);
+    text(p,325,523,25,1,"Audio",1240,white);
+    text(p,345,549,23,0,s->interaction_modes&X4_INTERACTION_AUDIO_PREVIOUS?"Anterior":"Nuevo",1220,green);
+    if(s->row==6)x4_rect(p,300,517,4,54,green);
+    text(p,325,581,25,1,"Sincronía vertical",1240,white);
+    text(p,345,607,23,0,s->interaction_modes&X4_INTERACTION_VSYNC_OFF?
         "No (menos retraso, puede verse un corte)":"Sí",1220,green);
-    if(s->row==7)x4_rect(p,300,783,4,74,green);
-    text(p,310,890,26,0,"ARRIBA/ABAJO Campo   IZQUIERDA/DERECHA Cambiar",1290,white);
-    text(p,310,932,26,0,"X Aplicar   CÍRCULO Cancelar   OPTIONS Salir",1290,white);
+    if(s->row==7)x4_rect(p,300,575,4,54,green);
+    text(p,325,639,25,1,"Conversión",1240,white);
+    text(p,345,665,23,0,(s->convert_sharp&1u)?
+        "Suave (bilineal H.264)":"Original (vecino más próximo)",1220,green);
+    if(s->row==8)x4_rect(p,300,633,4,54,green);
+    text(p,325,697,25,1,"Nitidez (solo luma)",1240,white);
+    const char *sharp_labels[]={"No","Baja (k=0.25)","Media (k=0.5)"};
+    text(p,345,723,23,0,sharp_labels[((s->convert_sharp>>1)&3u)<=2?((s->convert_sharp>>1)&3u):0],1220,green);
+    if(s->row==9)x4_rect(p,300,691,4,54,green);
+    text(p,325,755,25,1,"Petición de resolución",1240,white);
+    const char *req_labels[]={"Cada 300 ms (anterior)","Una vez (como Edge)","Una vez y repetir cada 5 s sin vídeo"};
+    unsigned req_sel = (s->convert_sharp >> 3) & 3u;
+    text(p,345,781,23,0,req_labels[req_sel<=2?req_sel:1],1220,green);
+    if(s->row==10)x4_rect(p,300,749,4,54,green);
+    text(p,310,835,24,0,"ARRIBA/ABAJO Campo   IZQUIERDA/DERECHA Cambiar",1290,white);
+    text(p,310,870,24,0,"X Aplicar   CÍRCULO Cancelar",1290,white);
 }
 int x4_stream_received_text(char *out, unsigned capacity, unsigned width, unsigned height,
     unsigned received, unsigned selected, bool full_range)

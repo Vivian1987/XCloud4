@@ -12,8 +12,17 @@ enum {
     X4_CATALOG_COLUMNS = 3,
     X4_CATALOG_ROWS = 2,
     X4_CATALOG_PAGE_SIZE = 6,
+    X4_CATALOG_FEATURED_MAX = 4,
+    X4_CATALOG_DISCOVER_ROW_VISIBLE = 5,
+    X4_CATALOG_POPULAR_FALLBACK_MAX = 10,
 };
 enum X4CatalogSection { X4_CATALOG_SECTION_CATALOG, X4_CATALOG_SECTION_RECENT };
+enum X4CatalogTab {
+    X4_CAT_TAB_DISCOVER = 0,
+    X4_CAT_TAB_CATALOG  = 1,
+    X4_CAT_TAB_RECENTS  = 2,
+    X4_CAT_TAB_COUNT    = 3,
+};
 enum X4CatalogFrameAction {
     X4_CATALOG_FRAME_LEFT = 1u << 0, X4_CATALOG_FRAME_RIGHT = 1u << 1,
     X4_CATALOG_FRAME_UP = 1u << 2, X4_CATALOG_FRAME_DOWN = 1u << 3,
@@ -47,6 +56,20 @@ typedef struct {
     char recent_selected_id[96];
     uint64_t recent_account_generation;
     bool recent_initialized;
+    /* Apple dark UI (Phase 1) tabbed navigation state */
+    enum X4CatalogTab active_tab;
+    bool apple_mode;
+    bool top_bar_focused;
+    unsigned top_bar_index; /* 0..2 = tabs, 3 = Search, 4 = Settings, 5 = Account */
+    bool hero_focused;      /* In Discover tab: true = hero, false = bottom row */
+    unsigned featured_count;
+    unsigned featured_index;
+    uint16_t featured_sources[X4_CATALOG_FEATURED_MAX];
+    unsigned discover_row_selected;
+    unsigned detail_scroll_offset;
+    bool open_fortnite_requested;
+    bool open_settings_requested;
+    bool open_account_requested;
 } X4CatalogBrowser;
 
 void x4_catalog_browser_init(X4CatalogBrowser *browser);
@@ -95,9 +118,16 @@ char x4_catalog_browser_keyboard_char(const X4CatalogBrowser *browser);
 bool x4_catalog_browser_selected_index(const X4CatalogBrowser *browser,
     const X4CatalogSnapshot *catalog, unsigned *source_index);
 
-/* Results: TRIANGLE enters editing; L2/R2 cycle access groups; CROSS starts
- * the mapped title; SQUARE refreshes; CIRCLE returns to account.
- * Editing: dpad selects A-Z/0-9, CROSS appends, SQUARE deletes, TRIANGLE
- * clears, R1 inserts a space, R2 applies and CIRCLE returns to results.
- * Apply/return retain the query. OPTIONS remains global exit in both modes.
- * Main owns button dispatch and sets editing; the model consumes no pad. */
+/* Apple dark UI (Phase 1) helpers for Discover / Catalog / Recents / Fortnite tabs */
+void x4_catalog_browser_rebuild_featured(X4CatalogBrowser *browser,
+    const X4CatalogSnapshot *catalog, const X4RecentGames *history);
+unsigned x4_catalog_browser_discover_row_count(const X4CatalogBrowser *browser,
+    const X4CatalogSnapshot *catalog, const X4RecentGames *history);
+bool x4_catalog_browser_discover_row_source(const X4CatalogBrowser *browser,
+    const X4CatalogSnapshot *catalog, const X4RecentGames *history,
+    unsigned row_idx, unsigned *source_index);
+bool x4_catalog_browser_apple_nav(X4CatalogBrowser *browser,
+    const X4CatalogSnapshot *catalog, const X4RecentGames *history,
+    int dx, int dy, int tab_delta);
+bool x4_catalog_browser_activate_top_bar(X4CatalogBrowser *browser);
+bool x4_catalog_browser_scroll_detail(X4CatalogBrowser *browser, int delta);

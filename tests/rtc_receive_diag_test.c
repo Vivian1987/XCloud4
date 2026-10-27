@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 static atomic_uint calls, reject_calls, setting_calls, nack_calls;
@@ -108,5 +109,83 @@ int main(void)
     simulated_id=100;assert(x4_rtc_receive_socket_time()==0);
     assert(x4_rtc_receive_delivery_time()==0);
     puts("PASS bounded thread identity registry returns unknown when full");
-    puts("8 receive bridge cases passed");return 0;
+
+    x4_rtc_receive_diag_reset();
+    uint8_t rtp_video[12] = {0x80, 102, 0, 1, 0, 0, 0, 0, 0x12, 0x34, 0x56, 0x78};
+    x4_rtc_receive_packet(X4_RD_SRTP_VALID, rtp_video, sizeof(rtp_video), 0, 2);
+    x4_rtc_receive_packet(X4_RD_SRTP_VALID, rtp_video, sizeof(rtp_video), 0, 2);
+    uint8_t rtp_audio[12] = {0x80, 111, 0, 2, 0, 0, 0, 0, 0x99, 0x88, 0x77, 0x66};
+    x4_rtc_receive_packet(X4_RD_SRTP_VALID, rtp_audio, sizeof(rtp_audio), 0, 2);
+    x4_rtc_receive_reject(X4_RD_SRTP_INPUT, X4_RD_SRTP_AUTH_FAIL, -1, NULL, 0);
+    x4_rtc_receive_reject(X4_RD_SRTP_INPUT, X4_RD_DEMUX_UNKNOWN, -1, NULL, 0);
+    x4_rtc_receive_reject(X4_RD_PEER, X4_RD_NO_TRACK, -1, NULL, 0);
+    x4_rtc_receive_diag_set_expected_video(0x12345678, 102, "video");
+    X4InboundRtpSummary summary;
+    x4_rtc_receive_diag_summary(&summary);
+    assert(summary.sdp_video_ssrc == 0x12345678);
+    assert(summary.sdp_video_pt == 102);
+    assert(!strcmp(summary.sdp_video_mid, "video"));
+    assert(summary.stream_count == 2);
+    assert(summary.srtp_decrypt_failures == 1);
+    assert(summary.unknown_ssrc_packets == 1);
+    assert(summary.unknown_pt_packets == 1);
+    puts("PASS inbound RTP stream breakdown and lowest-level reject counters");
+
+    x4_rtc_diag_record_remote_candidate("candidate:1 1 UDP 2130706431 192.168.1.50 50000 typ host", "video");
+    x4_rtc_diag_record_remote_candidate("candidate:2 1 UDP 1694498815 203.0.113.5 50001 typ srflx raddr 192.168.1.50 rport 50000", "audio");
+    x4_rtc_diag_record_selected_pair("192.168.1.100:54321", "203.0.113.5:50001");
+    X4IceConnectionSummary ice_summary;
+    x4_rtc_diag_get_ice_summary(&ice_summary);
+    assert(ice_summary.remote_candidate_count == 2);
+    assert(strcmp(ice_summary.remote_candidates[0].type, "host") == 0);
+    assert(strcmp(ice_summary.remote_candidates[0].ip, "192.168.1.50") == 0);
+    assert(ice_summary.remote_candidates[0].port == 50000);
+    assert(strcmp(ice_summary.remote_candidates[1].type, "srflx") == 0);
+    assert(strcmp(ice_summary.remote_candidates[1].ip, "203.0.113.5") == 0);
+    assert(ice_summary.remote_candidates[1].port == 50001);
+    assert(ice_summary.has_selected_pair);
+    assert(strcmp(ice_summary.selected_remote, "203.0.113.5:50001") == 0);
+    assert(strcmp(ice_summary.selected_local, "192.168.1.100:54321") == 0);
+    puts("PASS ICE remote candidates and selected candidate pair recording");
+
+    /* Test RTT sampling, aggregation (p50, p95), and reset */
+    x4_rtc_receive_diag_reset();
+    X4RttSummary rtt_sum;
+    x4_rtc_diag_get_rtt_summary(&rtt_sum);
+    assert(rtt_sum.sample_count == 0);
+    assert(rtt_sum.p50 == -1);
+
+    /* Negative samples ignored */
+    x4_rtc_diag_record_rtt_sample(-1);
+    x4_rtc_diag_record_rtt_sample(-5);
+    x4_rtc_diag_get_rtt_summary(&rtt_sum);
+    assert(rtt_sum.sample_count == 0);
+
+    /* Record 10 known samples: 20, 30, 40, 50, 60, 70, 80, 90, 100, 110 */
+    /* Sorted: [20, 30, 40, 50, 60, 70, 80, 90, 100, 110], n=10 */
+    /* Median at n/2 = index 5 -> 70 */
+    /* p95 at (10*95)/100 = 9 -> 110 */
+    int test_rtts[] = {80, 20, 110, 40, 60, 30, 100, 50, 70, 90};
+    for (int i = 0; i < 10; ++i) {
+        x4_rtc_diag_record_rtt_sample(test_rtts[i]);
+    }
+    x4_rtc_diag_get_rtt_summary(&rtt_sum);
+    assert(rtt_sum.sample_count == 10);
+    assert(rtt_sum.p50 == 70);
+    assert(rtt_sum.p95 == 110);
+    for (int i = 0; i < 10; ++i) {
+        assert(rtt_sum.samples[i] == test_rtts[i]); /* original arrival order preserved in series */
+    }
+
+    /* Reset clears everything */
+    x4_rtc_receive_diag_reset();
+    x4_rtc_diag_get_rtt_summary(&rtt_sum);
+    assert(rtt_sum.sample_count == 0);
+    assert(rtt_sum.p50 == -1);
+    x4_rtc_diag_get_ice_summary(&ice_summary);
+    assert(ice_summary.remote_candidate_count == 0);
+    assert(!ice_summary.has_selected_pair);
+    puts("PASS RTT sampling, percentile calculation, and clean session reset");
+
+    puts("11 receive bridge cases passed");return 0;
 }

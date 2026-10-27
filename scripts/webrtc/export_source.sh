@@ -18,7 +18,7 @@ print(match[1])
 PY_VERSION
 )
 fi
-[[ "$SOURCE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid source version' >&2; exit 1; }
+[[ "$SOURCE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo 'Invalid source version' >&2; exit 1; }
 ARCHIVE_ROOT="XCloud4-$SOURCE_VERSION-dependency-sources"
 OUTPUT=$(realpath -m -- "${2:-$RTC_ROOT/$ARCHIVE_ROOT.tar.gz}")
 [[ ! -e "$OUTPUT" && ! -L "$OUTPUT" ]] || { echo 'Refusing to replace an existing source snapshot' >&2; exit 1; }
@@ -138,7 +138,7 @@ for current, dirs, files in os.walk(opus):
         source = pathlib.Path(current) / name
         add(source, 'vendor/opus-1.5.2/' + source.relative_to(opus).as_posix())
 
-for name in ('prepare_port.py', 'prepare_receive_diagnostics.py', 'prepare_receiver_nack.py', 'build_native.sh', 'openorbis.cmake', 'mbedtls-user-config.h'):
+for name in ('prepare_port.py', 'prepare_receive_diagnostics.py', 'prepare_receiver_nack.py', 'prepare_rtt_api.py', 'build_native.sh', 'openorbis.cmake', 'mbedtls-user-config.h'):
     # build_native invokes the scripts in the project, not unrelated copies in
     # RTC_ROOT. Preserve those exact reproducible inputs in the source export.
     add(project / 'scripts/webrtc' / name, 'scripts/webrtc/' + name)

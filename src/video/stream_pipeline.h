@@ -51,6 +51,7 @@ int x4_stream_pipeline_submit_parameters(X4StreamPipeline *, const uint8_t *au, 
     uint64_t pts_us, uint64_t au_identity, const uint8_t *sps, size_t sps_bytes,
     const uint8_t *pps, size_t pps_bytes);
 void x4_stream_pipeline_received(X4StreamPipeline *, size_t bytes, uint64_t now_us);
+void x4_stream_pipeline_note_post_halt_video(X4StreamPipeline *, uint64_t now_us);
 void x4_stream_pipeline_au_received(X4StreamPipeline *, bool is_idr, uint64_t now_us);
 void x4_stream_pipeline_rtp_gap(X4StreamPipeline *, uint64_t now_us);
 void x4_stream_pipeline_note_keyframe_request(X4StreamPipeline *, uint64_t now_us);
@@ -64,6 +65,8 @@ void x4_stream_pipeline_snapshot(X4StreamPipeline *, X4StreamPipelineSnapshot *)
 bool x4_stream_pipeline_try_snapshot(X4StreamPipeline *,X4StreamPipelineSnapshot *);
 /* Callback atomics only. FULL is exported separately as a design failure. */
 void x4_stream_pipeline_note_callback_reject(X4StreamPipeline *,bool queue_full);
+void x4_stream_pipeline_note_ingress_stall_recovery(X4StreamPipeline *);
+uint64_t x4_stream_pipeline_ingress_stall_recoveries(const X4StreamPipeline *);
 /* Main owner only. UI VideoOut must already be closed. Overlay is invoked
  * after conversion, before SubmitFlip, on a buffer not SCREEN or PENDING. */
 int x4_stream_pipeline_display_open(X4StreamPipeline *);
@@ -72,6 +75,8 @@ enum { X4_STREAM_MAIN_CONVERTING=1, X4_STREAM_MAIN_FLIP_PENDING=2 };
 /* Main owner only: these fields are written by the same owner, so this
  * observation adds no lock, and is not a cross-thread status snapshot. */
 unsigned x4_stream_pipeline_main_state(const X4StreamPipeline *);
+/* Main-owned diagnostic state only; no rendering or ring policy changes. */
+void x4_stream_pipeline_note_menu_open(X4StreamPipeline *,bool open);
 void x4_stream_pipeline_note_controller_read(X4StreamPipeline *,uint64_t sampled_us);
 typedef struct {
     bool available;

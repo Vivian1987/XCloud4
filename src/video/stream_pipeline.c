@@ -10,7 +10,9 @@
 #include "stream_color_policy.h"
 #include "video_pipeline.h"
 #include "live_h264.h"
+#include "../streaming/rtc_receive_diag.h"
 #include "../core/build_identity.h"
+#include "../ui/server_settings.h"
 #include <orbis/VideoOut.h>
 #include <orbis/GnmDriver.h>
 #include <stdlib.h>
@@ -56,13 +58,15 @@ typedef struct {
     bool accepted, completed_output, ownership_uncertain;
     char stage[48];
 } StreamFrameError;
+#include "../ui/ui_perf.h"
 struct X4StreamPipeline {
     uint64_t session,started,ended;
     const atomic_bool *external_stop;
     X4Trace *trace;
     X4StreamAuQueue *au_queue;
     X4KeyframeLimiter *keyframe_limiter;
-    atomic_uint_fast64_t callback_rejected,callback_full_design_failures;
+    atomic_uint_fast64_t callback_rejected,callback_full_design_failures,ingress_stall_recoveries,first_video_rtp_us;
+    atomic_uint_fast64_t post_halt_video_packets,first_post_halt_video_us;
     atomic_uint_fast64_t submitted,consumed;
     atomic_uint_fast64_t dequeued;
     atomic_bool cancel,cleanup_allowed,decoder_done,decoder_finished;
@@ -132,6 +136,11 @@ struct X4StreamPipeline {
     X4VideoPipelineLease image_lease,scanout_lease;
     X4ProbeNativeOutput converting_image;
     uint64_t conversion_begin,work;
+    /* Diagnostic tags only; the ring policy and converter job are unchanged. */
+    atomic_bool menu_open;
+    bool conversion_menu_open,scanout_menu[3];
+    X4UiPerf conversion_menu[2];
+    uint64_t menu_presentations,menu_discarded_latency,menu_discarded_full,menu_log_at;
     int decoder_close_result;
 };
 static uint64_t now_us(void){return sceKernelGetProcessTime();}
@@ -286,12 +295,24 @@ static void *stream_pipeline_convert_worker(void *argument)
     }
     atomic_store_explicit(&w->finished,true,memory_order_release);return NULL;
 }
+/* Called while holding the existing ring gate. No additional lock, pixel
+ * access or policy decision is introduced by this accounting. */
+static void menu_ring_drops(X4StreamPipeline *p,uint64_t latency,uint64_t full)
+{
+    if(atomic_load_explicit(&p->menu_open,memory_order_relaxed)){
+        p->menu_discarded_latency+=p->ring.discarded_latency-latency;
+        p->menu_discarded_full+=p->ring.discarded_ready-full;
+    }
+}
 static int acquire_native(X4StreamPipeline *p,X4VideoPipelineLease *lease)
 {
     uint64_t start=now_us();
     while(!stopping(p)){
         int recovery=service_idr_wait(p);if(recovery)return recovery;
-        lock(&p->ring_gate);int rc=x4_video_pipeline_acquire_decode(&p->ring,lease,NULL);unlock(&p->ring_gate);
+        lock(&p->ring_gate);
+        uint64_t before_latency=p->ring.discarded_latency,before_full=p->ring.discarded_ready;
+        int rc=x4_video_pipeline_acquire_decode(&p->ring,lease,NULL);
+        menu_ring_drops(p,before_latency,before_full);unlock(&p->ring_gate);
         if(rc!=X4_PIPELINE_WAIT)return rc;
         if(now_us()-start>STREAM_TIMEOUT_US)return X4_PIPELINE_EXHAUSTED;
         int waited=x4_stream_wait_block(&p->decode_wait,X4_STREAM_WAIT_MAX_US);
@@ -584,7 +605,8 @@ static void *stream_pipeline_decode_worker(void *argument)
             unsigned received_matrix=p->native_info.sps.matrix_coefficients;
             unsigned effective_matrix=x4_stream_color_resolve(received_matrix,p->native_info.sps.visible_width,
                 p->native_info.sps.visible_height,p->request.color_preference);
-            lock(&p->ring_gate);p->color=(X4VideoPipelineColor){effective_matrix,p->native_info.sps.full_range!=0};
+            lock(&p->ring_gate);p->color=(X4VideoPipelineColor){effective_matrix,p->native_info.sps.full_range!=0,
+                p->request.convert_mode,p->request.sharpness};
             atomic_store_explicit(&p->reconfiguring,false,memory_order_release);unlock(&p->ring_gate);
             printf("XCloud4: stream color matrix_received=%u selected_matrix=%u selected=%s full_range=%u warnings=%u epoch=%llu\n",
                 received_matrix,p->color.matrix_coefficients,p->color.matrix_coefficients==1?"BT709":"BT601",p->color.full_range,p->native_info.sps_diagnostics.warning_mask,(unsigned long long)p->epoch_count);
@@ -709,7 +731,8 @@ X4StreamPipeline *x4_stream_pipeline_create_request(uint64_t session,X4Trace *tr
     X4StreamPipeline *p=calloc(1,sizeof(*p));if(!p)return NULL;
     p->session=session;p->started=now_us();p->trace=trace;p->external_stop=stop;p->display_handle=-1;
     p->request=x4_stream_request_capture(request);
-    x4_stream_startup_init(&p->startup,x4_stream_request_resolution_alias(&p->request)!=NULL);
+    p->color.convert_mode=p->request.convert_mode;p->color.sharpness=p->request.sharpness;
+    x4_stream_startup_init_mode(&p->startup,x4_stream_request_resolution_alias(&p->request)!=NULL,p->request.resolution_request_mode);
     p->display_allocate=p->display_map=p->display_register=p->display_rate=
         p->display_close=p->display_unmap=p->display_release=X4_PROBE_STACK_NOT_RUN;
     p->native_decode_result=X4_PROBE_STACK_NOT_RUN;
@@ -718,7 +741,8 @@ X4StreamPipeline *x4_stream_pipeline_create_request(uint64_t session,X4Trace *tr
         p->native_info.delete_decoder_result=p->native_info.release_queue_result=
         p->native_info.close_result=X4_PROBE_STACK_NOT_RUN;
     atomic_init(&p->callback_rejected,0);atomic_init(&p->callback_full_design_failures,0);
-    atomic_init(&p->submitted,0);atomic_init(&p->consumed,0);atomic_init(&p->cancel,false);
+    atomic_init(&p->post_halt_video_packets,0);atomic_init(&p->first_post_halt_video_us,0);
+    atomic_init(&p->submitted,0);atomic_init(&p->consumed,0);atomic_init(&p->cancel,false);atomic_init(&p->menu_open,false);
     atomic_init(&p->dequeued,0);
     atomic_init(&p->current_au,0);atomic_init(&p->stop_requested_us,0);atomic_init(&p->keyframe_pending,false);
     atomic_init(&p->reconfiguring,false);atomic_init(&p->conversion_readers,0);
@@ -792,7 +816,25 @@ int x4_stream_pipeline_submit_parameters(X4StreamPipeline *p,const uint8_t *au,s
     return rc;
 }
 void x4_stream_pipeline_received(X4StreamPipeline *p,size_t bytes,uint64_t now)
-{if(p)x4_stream_diagnostics_received(p->diagnostics,bytes,now);}
+{
+    if(p){
+        x4_stream_startup_note_video_packet(&p->startup);
+        if(!atomic_load_explicit(&p->first_video_rtp_us,memory_order_relaxed)){
+            uint64_t unset=0;
+            (void)atomic_compare_exchange_strong_explicit(&p->first_video_rtp_us,&unset,now,memory_order_release,memory_order_relaxed);
+        }
+        x4_stream_diagnostics_received(p->diagnostics,bytes,now);
+    }
+}
+void x4_stream_pipeline_note_post_halt_video(X4StreamPipeline *p,uint64_t now)
+{
+    if(p){
+        atomic_fetch_add_explicit(&p->post_halt_video_packets,1,memory_order_relaxed);
+        uint64_t empty=0;
+        (void)atomic_compare_exchange_strong_explicit(&p->first_post_halt_video_us,&empty,now,
+            memory_order_release,memory_order_relaxed);
+    }
+}
 void x4_stream_pipeline_au_received(X4StreamPipeline *p,bool idr,uint64_t now)
 {if(p)x4_stream_diagnostics_au_received(p->diagnostics,idr,now);}
 void x4_stream_pipeline_rtp_gap(X4StreamPipeline *p,uint64_t now)
@@ -817,6 +859,16 @@ void x4_stream_pipeline_note_callback_reject(X4StreamPipeline *p,bool queue_full
     if(!p)return;
     atomic_fetch_add_explicit(&p->callback_rejected,1,memory_order_relaxed);
     if(queue_full)atomic_fetch_add_explicit(&p->callback_full_design_failures,1,memory_order_relaxed);
+}
+void x4_stream_pipeline_note_ingress_stall_recovery(X4StreamPipeline *p)
+{
+    if(!p)return;
+    atomic_fetch_add_explicit(&p->ingress_stall_recoveries,1,memory_order_relaxed);
+}
+uint64_t x4_stream_pipeline_ingress_stall_recoveries(const X4StreamPipeline *p)
+{
+    if(!p)return 0;
+    return atomic_load_explicit(&p->ingress_stall_recoveries,memory_order_relaxed);
 }
 bool x4_stream_pipeline_try_snapshot(X4StreamPipeline *p,X4StreamPipelineSnapshot *out)
 {
@@ -875,6 +927,7 @@ static int observe_display(X4StreamPipeline *p)
     if(rc==X4_PIPELINE_WAIT)return now-p->display.slots[p->display.pending].submitted_us>STREAM_TIMEOUT_US?X4_PIPELINE_STATE:0;
     if(rc)return rc;
     const X4VideoPipelineScanout *s=&p->display.slots[shown.slot];
+    if(p->scanout_menu[shown.slot])++p->menu_presentations;
     p->last_flip_ptime=status.ptime;p->last_flip_submitted_us=s->submitted_us;p->last_flip_observed_us=now;
     /* SDK ptime occupies the flip process-time field. Accept it only in the
      * submitted..observed process-time interval. Invalid/unknown clock values
@@ -919,8 +972,10 @@ static int finish_conversion(X4StreamPipeline *p,X4StreamOverlay overlay,void *c
         }else return now_us()-p->conversion_begin>STREAM_TIMEOUT_US?X4_PROBE_STACK_TIMEOUT:X4_PIPELINE_WAIT;
     }
     uint64_t end=now_us();duration(p,X4_STREAM_CONVERSION,end-p->conversion_begin);
+    if(!abandon)x4_ui_perf_record(&p->conversion_menu[p->conversion_menu_open?1:0],end-p->conversion_begin);
     for(unsigned i=0;i<2;++i)if(p->converters[i].result)rc=p->converters[i].result;
     if(!rc&&!abandon&&!stopping(p)){
+        p->scanout_menu[p->scanout_lease.slot]=atomic_load_explicit(&p->menu_open,memory_order_relaxed);
         if(overlay)overlay(p->display_pixels[p->scanout_lease.slot],context);
         rc=x4_video_pipeline_finish_scanout(&p->display,p->scanout_lease,p->converting_image.output_id,p->converting_image.decode_end_us,end);
         if(!rc){lock(&p->status_gate);++p->view.conversions;p->view.convert_us+=end-p->conversion_begin;
@@ -951,12 +1006,15 @@ int x4_stream_pipeline_present(X4StreamPipeline *p,X4StreamOverlay overlay,void 
         if(!rc){
             X4VideoPipelineColor color;
             lock(&p->ring_gate);
+            uint64_t before_latency=p->ring.discarded_latency,before_full=p->ring.discarded_ready;
             rc=atomic_load_explicit(&p->reconfiguring,memory_order_acquire)?X4_PIPELINE_WAIT:
                 x4_video_pipeline_take_ready(&p->ring,&p->image_lease,NULL);
+            menu_ring_drops(p,before_latency,before_full);
             if(!rc){p->converting_image=p->images[p->image_lease.slot];color=p->color;
                 p->converting=true;atomic_fetch_add_explicit(&p->conversion_readers,1,memory_order_release);}
             unlock(&p->ring_gate);
-            if(!rc){p->conversion_begin=now_us();++p->work;
+            if(!rc){p->conversion_menu_open=atomic_load_explicit(&p->menu_open,memory_order_relaxed);
+                p->conversion_begin=now_us();++p->work;
                 note_conversion_begin(p,p->conversion_begin);
 #if X4_STREAM_PIPELINE_TEST_HOOKS
                 extern void x4_stream_pipeline_test_before_dispatch(X4StreamPipeline *);
@@ -974,6 +1032,26 @@ int x4_stream_pipeline_present(X4StreamPipeline *p,X4StreamOverlay overlay,void 
         }else if(rc!=X4_PIPELINE_WAIT)return fail_named(p,rc,"scanout acquisition");
     }
     return atomic_load_explicit(&p->error,memory_order_acquire);
+}
+void x4_stream_pipeline_note_menu_open(X4StreamPipeline *p,bool open)
+{
+    if(!p||p->closed||p->video_halted)return;
+    atomic_store_explicit(&p->menu_open,open,memory_order_relaxed);
+#if !X4_PUBLIC
+    uint64_t now=now_us();
+    if(now-p->menu_log_at>=5000000u){
+        p->menu_log_at=now;
+        lock(&p->ring_gate);
+        uint64_t discarded_latency=p->menu_discarded_latency,discarded_full=p->menu_discarded_full;
+        unlock(&p->ring_gate);
+        printf("XCloud4 UI menu pipeline: convert_closed_n=%llu p50_us=%llu p95_us=%llu max_us=%llu convert_open_n=%llu p50_us=%llu p95_us=%llu max_us=%llu menu_presented=%llu discarded_latency_while_open=%llu discarded_full_while_open=%llu\n",
+            (unsigned long long)p->conversion_menu[0].n,(unsigned long long)x4_ui_perf_percentile(&p->conversion_menu[0],50),
+            (unsigned long long)x4_ui_perf_percentile(&p->conversion_menu[0],95),(unsigned long long)p->conversion_menu[0].max,
+            (unsigned long long)p->conversion_menu[1].n,(unsigned long long)x4_ui_perf_percentile(&p->conversion_menu[1],50),
+            (unsigned long long)x4_ui_perf_percentile(&p->conversion_menu[1],95),(unsigned long long)p->conversion_menu[1].max,
+            (unsigned long long)p->menu_presentations,(unsigned long long)discarded_latency,(unsigned long long)discarded_full);
+    }
+#endif
 }
 unsigned x4_stream_pipeline_main_state(const X4StreamPipeline *p)
 {
@@ -1277,6 +1355,10 @@ int x4_stream_pipeline_export(X4StreamPipeline *p,const X4ProbeStackReport *ingr
     uint64_t report_budget=v->native_budget_bytes?v->native_budget_bytes:UINT64_C(134217728);
     fprintf(f,"{\"schema\":\"X4STREAM_PIPELINE5\",\"source_id\":\"%s\",\"profile\":%u,\"ready_policy\":\"latest\",\"display_policy\":\"one_in_flight\",\"converters\":2,\"native_pipeline_depth\":%u,\"output_memory_type\":0,\"decoder_budget\":%llu,\"scanout_bytes\":25165824,\"AU_queue_bytes\":%zu,\"parameter_queue_bytes\":%u,\"AU_queue_metadata_bytes_including_parameters\":%zu,\"control_context_bytes\":%zu,",
         X4_SOURCE_ID,(unsigned)p->request.profile,report_depth,(unsigned long long)report_budget,queue.arena_bytes,2u*X4_STREAM_AU_PARAMETER_BYTES*X4_STREAM_AU_ENTRIES,queue.metadata_bytes,sizeof(*p));
+    fputs("\"menu_pipeline\":{\"conversion_without_menu_us\":",f);x4_ui_perf_write(f,&p->conversion_menu[0]);
+    fputs(",\"conversion_with_menu_us\":",f);x4_ui_perf_write(f,&p->conversion_menu[1]);
+    fprintf(f,",\"presented_with_menu\":%llu,\"discarded_latency_while_open\":%llu,\"discarded_ring_full_while_open\":%llu,\"scope\":\"conversion tagged at dispatch; presentation tagged at overlay then confirmed by flip; ring drops tagged at the event while open; excludes reconfiguration cancellations\"},",
+        (unsigned long long)p->menu_presentations,(unsigned long long)p->menu_discarded_latency,(unsigned long long)p->menu_discarded_full);
     fputs("\"au_queue\":",f);write_au_queue(f,&queue);
     fputs(",\"keyframe_limiter\":",f);write_keyframe_limiter(f,p->keyframe_limiter);
     fputs(",\"blocking_waits\":",f);write_waits(f,p);
@@ -1306,8 +1388,49 @@ int x4_stream_pipeline_export(X4StreamPipeline *p,const X4ProbeStackReport *ingr
         (unsigned long long)p->decoder_join_wait_us,(unsigned long long)p->native_stop_us,
         (unsigned long long)p->native_decode_after_stop_us,(unsigned long long)p->native_decode_started_after_stop);
     uint64_t rejected=atomic_load(&p->callback_rejected),full=atomic_load(&p->callback_full_design_failures);
-    fprintf(f,",\"rtp_callback_admission\":{\"rejected\":%llu,\"full_design_failures\":%llu,\"design_failure\":%s,\"scope\":\"callback queue FULL is a separate design failure, never an AU queue policy drop; other rejects remain distinct\"},",
-        (unsigned long long)rejected,(unsigned long long)full,full?"true":"false");
+    uint64_t stall_recoveries=atomic_load(&p->ingress_stall_recoveries);
+    fprintf(f,",\"rtp_callback_admission\":{\"rejected\":%llu,\"full_design_failures\":%llu,\"ingress_stall_recoveries\":%llu,\"design_failure\":%s,\"scope\":\"callback queue FULL is a separate design failure, never an AU queue policy drop; other rejects remain distinct\"},",
+        (unsigned long long)rejected,(unsigned long long)full,(unsigned long long)stall_recoveries,full?"true":"false");
+    fprintf(f,"\"ingress_stall_recoveries\":%llu,", (unsigned long long)stall_recoveries);
+    X4InboundRtpSummary summary = {0};
+    x4_rtc_receive_diag_summary(&summary);
+    fprintf(f, "\"inbound_rtp\":[");
+    for (unsigned i = 0; i < summary.stream_count; ++i) {
+        if (i) fputc(',', f);
+        fprintf(f, "{\"ssrc\":%u,\"payload_type\":%u,\"packets\":%llu,\"first_us\":%llu,\"last_us\":%llu}",
+            summary.streams[i].ssrc, summary.streams[i].payload_type,
+            (unsigned long long)summary.streams[i].packets,
+            (unsigned long long)summary.streams[i].first_us,
+            (unsigned long long)summary.streams[i].last_us);
+    }
+    fprintf(f, "],\"srtp_decrypt_failures\":%llu,\"unknown_ssrc_packets\":%llu,\"unknown_pt_packets\":%llu,",
+        (unsigned long long)summary.srtp_decrypt_failures,
+        (unsigned long long)summary.unknown_ssrc_packets,
+        (unsigned long long)summary.unknown_pt_packets);
+    fprintf(f, "\"post_halt_video_packets\":%llu,\"first_post_halt_video_us\":%llu,",
+        (unsigned long long)atomic_load_explicit(&p->post_halt_video_packets, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&p->first_post_halt_video_us, memory_order_relaxed));
+    fprintf(f, "\"sdp_video\":{\"ssrc\":%u,\"payload_type\":%u,\"mid\":\"%s\"},",
+        summary.sdp_video_ssrc, summary.sdp_video_pt, summary.sdp_video_mid[0] ? summary.sdp_video_mid : "");
+    uint64_t alias_sent = x4_stream_startup_alias_sent_us(&p->startup);
+    uint64_t first_rtp = atomic_load_explicit(&p->first_video_rtp_us, memory_order_acquire);
+    uint64_t initial_delay = (first_rtp && alias_sent && first_rtp >= alias_sent) ? (first_rtp - alias_sent) : 0;
+    bool session_started = p->startup.admitted;
+    bool session_expired = p->startup.timed_out;
+    fprintf(f,"\"initial_video_delay_us\":%llu,\"stream_startup\":{\"initial_video_delay_us\":%llu,\"alias_resends\":%u,\"started\":%s,\"expired\":%s,\"alias_sent_us\":%llu,\"first_video_rtp_us\":%llu,\"request_mode\":%u,\"alias_sends\":%u,\"last_alias_send_us\":%llu},",
+        (unsigned long long)initial_delay,
+        (unsigned long long)initial_delay,
+        (unsigned)p->startup.alias_retries,
+        session_started ? "true" : "false",
+        session_expired ? "true" : "false",
+        (unsigned long long)alias_sent,
+        (unsigned long long)first_rtp,
+        (unsigned)p->startup.request_mode,
+        (unsigned)atomic_load_explicit(&p->startup.alias_sends, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&p->startup.last_alias_send_us, memory_order_relaxed));
+    x4_server_settings_write_json(f);
+    x4_rtc_diag_write_ice_json(f);
+    x4_rtc_diag_write_rtt_json(f);
     fprintf(f,"\"requested\":{\"width\":%u,\"height\":%u,\"fps\":%u,\"bitrate_kbps\":%u,\"os_name\":\"%s\",\"display_info\":%s},",
         p->request.width,p->request.height,p->request.fps,p->request.bitrate_kbps,p->request.os_name,p->request.display_info?"true":"false");
     fprintf(f,"\"request_profile\":{\"id\":%u,\"label\":\"%s\",\"color_preference\":%u},",
@@ -1326,6 +1449,15 @@ int x4_stream_pipeline_export(X4StreamPipeline *p,const X4ProbeStackReport *ingr
     fprintf(f,"\"color\":{\"active\":%s,\"received_matrix_coefficients\":%u,\"matrix_coefficients\":%u,\"preference\":%u,\"selected_matrix\":\"%s\",\"full_range\":%s,\"full_range_implemented\":true},\"dequeued_AU\":%llu,\"geometry_warnings\":%llu,",
         p->view.native_ready?"true":"false",p->view.received_matrix,p->color.matrix_coefficients,p->request.color_preference,p->color.matrix_coefficients==1?"BT709":"BT601",p->color.full_range?"true":"false",(unsigned long long)atomic_load(&p->dequeued),(unsigned long long)v->geometry_warnings);
     fprintf(f,"\"conversion_path\":{\"observed\":%s,\"last\":\"%s\",\"scalar_outputs\":%llu},",p->conversion_path_seen?"true":"false",p->conversion_path==X4_PIPELINE_CONVERT_SSE2?"SSE2":"scalar",(unsigned long long)p->scalar_outputs);
+    uint64_t conv_p50=0, conv_p95=0, conv_max=0;
+    const char *sharp_names[]={"No","Baja","Media"};
+    (void)x4_stream_diagnostics_stage_percentile(p->diagnostics,X4_STREAM_CONVERSION,50,&conv_p50,&conv_max);
+    (void)x4_stream_diagnostics_stage_percentile(p->diagnostics,X4_STREAM_CONVERSION,95,&conv_p95,NULL);
+    fprintf(f,"\"conversion_tuning\":{\"mode\":\"%s\",\"sharpness\":\"%s\",\"sharpness_level\":%u,\"timing_us\":{\"p50_upper_us\":%llu,\"p95_upper_us\":%llu,\"maximum_us\":%llu}},",
+        p->color.convert_mode?"Suave":"Original",
+        sharp_names[p->color.sharpness<=2?p->color.sharpness:0],
+        (unsigned)p->color.sharpness,
+        (unsigned long long)conv_p50,(unsigned long long)conv_p95,(unsigned long long)conv_max);
     fprintf(f,"\"decoder_depth\":{\"selection\":%u,\"requested\":%u,\"active\":%u,\"fallback\":%s,\"input_buffers\":%u,\"output_buffers\":%u,\"calls_with_output\":%llu,\"calls_without_output\":%llu,\"calls_with_native_error\":%llu,\"output_epochs_with_picture\":%llu,\"first_output_us\":%llu,\"last_output_us\":%llu,\"native_budget_bytes\":%llu,\"auxiliary_budget_bytes\":%llu,\"held_output_mask_after_close\":%u,\"live_inputs_after_close\":%u,\"input_retirement_posterior_calls\":%u,\"input_contract_SDK_verified\":false,\"flush_on_close\":false,\"output_interval_scope\":\"validated native outputs within each decoder epoch; caller pacing and IDR waits included; no PTS association\"},",
         p->request.decoder_depth,v->requested_depth,v->active_depth,v->depth_fallback_used?"true":"false",
         v->input_count,v->output_count,(unsigned long long)p->calls_with_output,(unsigned long long)p->calls_without_output,(unsigned long long)p->calls_with_error,

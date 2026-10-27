@@ -31,6 +31,7 @@ enum {
     X4_AUTH_E_SESSION = -2012,    /* Xbox reported the cloud session failed */
     X4_AUTH_E_DEADLINE = -2013,   /* session not ready within its deadline */
     X4_AUTH_E_UNCONFIRMED = -2014, /* a remote session may exist; not confirmed closed */
+    X4_AUTH_E_FORTNITE_NOT_FOUND = -2015, /* Fortnite not present in /v2/titles */
 };
 
 typedef struct X4Auth X4Auth;
@@ -63,7 +64,7 @@ enum X4AuthState {
 
 /* X4_AUTH_XBOX_SESSION is dispatched only through x4_auth_start_session;
  * x4_auth_start refuses it. */
-enum X4AuthAction { X4_AUTH_SIGN_IN, X4_AUTH_CHECK_CONNECTION, X4_AUTH_XBOX_CATALOG, X4_AUTH_XBOX_SESSION, X4_AUTH_XBOX_RECENTS };
+enum X4AuthAction { X4_AUTH_SIGN_IN, X4_AUTH_CHECK_CONNECTION, X4_AUTH_XBOX_CATALOG, X4_AUTH_XBOX_SESSION, X4_AUTH_XBOX_RECENTS, X4_AUTH_FORTNITE_QUERY };
 
 typedef struct {
     enum X4AuthState state;

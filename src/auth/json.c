@@ -270,6 +270,46 @@ int x4_json_member(X4JsonSpan object, const char *name, X4JsonSpan *out)
     *out = (X4JsonSpan){0};
     return -1;
 }
+int x4_json_object_member(X4JsonSpan object, size_t *cursor, X4JsonSpan *key, X4JsonSpan *val)
+{
+    if (key) *key = (X4JsonSpan){0};
+    if (val) *val = (X4JsonSpan){0};
+    if (!cursor || !key || !val || x4_json_type(object) != X4_JSON_T_OBJECT || *cursor > object.length) return -1;
+    if (*cursor == object.length) return 0;
+    const unsigned char *base = (const unsigned char *)object.data;
+    Reader r = span_reader(object);
+    if (*cursor == 0) {
+        ++r.p;
+        space(&r);
+        if (r.p < r.end && *r.p == '}') { *cursor = object.length; return 0; }
+    } else {
+        r.p = base + *cursor;
+    }
+    space(&r);
+    if (take(&r, '"') < 0) return -1;
+    const unsigned char *kstart = r.p;
+    while (r.p < r.end && *r.p != '"') {
+        uint32_t n;
+        if (codepoint(&r, &n) < 0) return -1;
+    }
+    if (r.p >= r.end || *r.p != '"') return -1;
+    const unsigned char *kend = r.p;
+    ++r.p;
+    if (take(&r, ':') < 0) return -1;
+    space(&r);
+    const unsigned char *vstart = r.p;
+    if (value(&r, 1) < 0) return -1;
+    const unsigned char *vend = r.p;
+    space(&r);
+    if (r.p == r.end) return -1;
+    unsigned char c = *r.p++;
+    if (c == '}') *cursor = object.length;
+    else if (c == ',') *cursor = (size_t)(r.p - base);
+    else return -1;
+    *key = span(kstart, kend);
+    *val = span(vstart, vend);
+    return 1;
+}
 int x4_json_item(X4JsonSpan array, size_t *cursor, X4JsonSpan *item)
 {
     if (item) *item = (X4JsonSpan){0};

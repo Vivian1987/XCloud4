@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "http_client.h"
+#include "ca_bundle.h"
 #include "../core/module.h"
 #include "../ui/lang.h"
 #include "../core/build_identity.h"
@@ -57,7 +58,7 @@ static const char sessions_path[] = "/v5/sessions/cloud/";
 
 /* DEST_SESSION is produced only by classify_session, never by classify. */
 enum Destination { DEST_NONE, DEST_XBOX_USER, DEST_XSTS, DEST_LOGIN, DEST_REGION, DEST_STORE, DEST_SESSION };
-enum SessionRoute { ROUTE_NONE, ROUTE_PLAY, ROUTE_STATE, ROUTE_KEEPALIVE, ROUTE_CONNECT, ROUTE_SDP, ROUTE_ICE, ROUTE_RESOURCE };
+enum SessionRoute { ROUTE_NONE, ROUTE_WAITTIME, ROUTE_PLAY, ROUTE_STATE, ROUTE_KEEPALIVE, ROUTE_CONNECT, ROUTE_SDP, ROUTE_ICE, ROUTE_RESOURCE };
 
 /* Request inputs copied into one block. It must outlive the native request,
  * connection and template, so it is freed only after they were deleted. */
@@ -78,9 +79,15 @@ typedef struct {
     int32_t tmpl, conn;
     Owned *anchor;
 } PublicConnection;
-/* This application owns one sequential networking worker. Net stays global;
- * subsequent operations reuse the successful initialization we performed. */
-static bool net_initialized;
+/* Real typed ABI in pinned OpenOrbis libkernel.h. */
+int sceKernelUsleep(unsigned int microseconds);
+
+enum {
+    X4_NET_INIT_UNSET = 0,
+    X4_NET_INIT_BUSY  = 1,
+    X4_NET_INIT_READY = 2,
+};
+static _Atomic int net_init_state = X4_NET_INIT_UNSET;
 
 struct X4Http {
     int net_module, ssl_module, http_module;
@@ -117,6 +124,7 @@ struct X4Http {
         int32_t (*read)(int32_t, void *, size_t);
         int32_t (*status)(int32_t, int32_t *);
         int32_t (*all_response_headers)(int32_t, char **, size_t *);
+        int32_t (*https_load_cert)(int32_t, int32_t, void *, void *, void *);
     } fn;
 };
 
@@ -213,13 +221,27 @@ X4Http *x4_http_open(int *error)
     void *headers_address = NULL;
     if (x4_module_symbol(h->http_module, "sceHttpGetAllResponseHeaders", &headers_address) >= 0)
         h->fn.all_response_headers = (typeof(h->fn.all_response_headers))headers_address;
+    void *load_cert_address = NULL;
+    if (x4_module_symbol(h->http_module, "sceHttpsLoadCert", &load_cert_address) >= 0)
+        h->fn.https_load_cert = (typeof(h->fn.https_load_cert))load_cert_address;
 
     h->stage = "NetInit";
-    if (!net_initialized) {
-        rc = h->fn.net_init();
-        printf("XCloud4: NetInit -> 0x%08x\n", (unsigned)rc);
-        if (rc < 0) goto fail;
-        net_initialized = true;
+    for (;;) {
+        int expected = X4_NET_INIT_UNSET;
+        if (atomic_compare_exchange_strong(&net_init_state, &expected, X4_NET_INIT_BUSY)) {
+            rc = h->fn.net_init();
+            printf("XCloud4: NetInit -> 0x%08x\n", (unsigned)rc);
+            if (rc < 0 && (unsigned)rc != 0x80410103u) {
+                atomic_store(&net_init_state, X4_NET_INIT_UNSET);
+                goto fail;
+            }
+            atomic_store(&net_init_state, X4_NET_INIT_READY);
+            break;
+        } else if (expected == X4_NET_INIT_READY) {
+            break;
+        } else {
+            sceKernelUsleep(1000);
+        }
     }
     h->stage = "pool de red";
     rc = h->fn.pool_create("x4-http-net", X4_NET_POOL_SIZE, 0);
@@ -233,6 +255,28 @@ X4Http *x4_http_open(int *error)
     rc = h->fn.http_init(h->pool, h->ssl, X4_HTTP_POOL_SIZE);
     if (rc < 0) goto fail;
     h->http = rc;
+    if (h->fn.https_load_cert) {
+        static _Atomic int ca_log_once = 0;
+        size_t ca_count = 0;
+        const SslPem * const *pem_ptrs = x4_ca_bundle_get_ssl_pem_ptrs(&ca_count);
+        int cert_rc = h->fn.https_load_cert(h->http, (int32_t)ca_count, (void *)pem_ptrs, NULL, NULL);
+        const char *ca_mode = "todas";
+        if (cert_rc < 0) {
+            pem_ptrs = x4_ca_bundle_get_ssl_pem_ptrs_rsa(&ca_count);
+            cert_rc = h->fn.https_load_cert(h->http, (int32_t)ca_count, (void *)pem_ptrs, NULL, NULL);
+            if (cert_rc >= 0) {
+                ca_mode = "solo RSA";
+            } else {
+                ca_mode = "ninguna";
+                ca_count = 0;
+            }
+        }
+        int expected_log = 0;
+        if (atomic_compare_exchange_strong(&ca_log_once, &expected_log, 1)) {
+            printf("XCloud4: CA propias: %u cargadas (%s) rc=0x%08x\n",
+                   (unsigned)ca_count, ca_mode, (unsigned)cert_rc);
+        }
+    }
     h->stage = "HTTPS listo";
     printf("XCloud4: HTTPS listo (Net/Ssl/Http)\n");
     if (error) *error = 0;
@@ -395,8 +439,9 @@ static bool session_id(const char *id, size_t n)
 }
 
 /* https://<region host>/v5/sessions/cloud/{play | <id> | <id>/state |
- * <id>/keepalive | <id>/connect | <id>/sdp | <id>/ice}, nothing more. The host passes the same
- * label checks as the /v2/titles region. */
+ * <id>/keepalive | <id>/connect | <id>/sdp | <id>/ice}, plus the optional
+ * GET /v1/waittime/<titleId>. The host passes the same label checks as
+ * the /v2/titles region. */
 static enum SessionRoute classify_session(const char *url)
 {
     size_t n = bounded_length(url, X4_HTTP_JSON_URL_MAX + 1);
@@ -407,6 +452,17 @@ static enum SessionRoute classify_session(const char *url)
     while (host[h] && host[h] != '/') ++h;
     if (!region_host(host, h)) return ROUTE_NONE;
     const char *path = host + h;
+    /* Optional queue estimate: the exact researched GET route only. The
+     * public title ID is one safe segment, not a session ID or arbitrary URL. */
+    static const char waittime[] = "/v1/waittime/";
+    if (!strncmp(path, waittime, sizeof(waittime) - 1)) {
+        const char *title = path + sizeof(waittime) - 1;
+        size_t len = strlen(title);
+        if (!len || len > 95) return ROUTE_NONE;
+        for (size_t i = 0; i < len; ++i)
+            if (!alphanumeric((unsigned char)title[i]) && title[i] != '-' && title[i] != '_') return ROUTE_NONE;
+        return ROUTE_WAITTIME;
+    }
     if (strncmp(path, sessions_path, prefix)) return ROUTE_NONE;
     const char *rest = path + prefix;
     if (!strcmp(rest, "play")) return ROUTE_PLAY;
@@ -740,6 +796,7 @@ static int perform_session(X4Http *h, enum X4HttpSessionMethod method, const cha
         native = method == X4_SESSION_HTTP_POST ? X4_HTTP_METHOD_POST : X4_HTTP_METHOD_GET;
         break;
     case ROUTE_STATE:
+    case ROUTE_WAITTIME:
         allowed = method == X4_SESSION_HTTP_GET && !json;
         native = X4_HTTP_METHOD_GET;
         break;

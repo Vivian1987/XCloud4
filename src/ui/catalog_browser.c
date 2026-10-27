@@ -12,6 +12,17 @@ static unsigned folded(unsigned char c)
     return c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c;
 }
 
+static bool ascii_ieq(const char *a, const char *b)
+{
+    if (!a || !b) return false;
+    while (*a && *b) {
+        if (folded((unsigned char)*a) != folded((unsigned char)*b)) return false;
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
 /* Validated bounded UTF-8 presentation search. The existing on-screen query
  * is ASCII; Latin accents/case are folded only for matching, never rewritten
  * in the displayed name, provider ID, launch ID or credential. */
@@ -102,6 +113,7 @@ static bool matches(const X4CatalogBrowser *b, const X4CatalogTitle *title, size
 static void remember_selected(X4CatalogBrowser *b, const X4CatalogSnapshot *c)
 {
     b->selected_id[0] = 0;
+    b->detail_scroll_offset = 0;
     if (!c || c->state!=X4_CATALOG_READY || c->count>X4_CATALOG_MAX) return;
     if (b->selected >= b->filtered_count || b->filtered_count > X4_CATALOG_MAX) return;
     unsigned index = b->indices[b->selected];
@@ -124,6 +136,7 @@ void x4_catalog_browser_init(X4CatalogBrowser *b)
     if (!b) return;
     memset(b, 0, sizeof(*b));
     b->criteria_dirty = true;
+    b->hero_focused = true;
 }
 
 void x4_catalog_browser_rebuild(X4CatalogBrowser *b, const X4CatalogSnapshot *c)
@@ -232,6 +245,7 @@ static void remember_recent(X4CatalogBrowser *b,const X4RecentGames *h)
 {
     const X4RecentGame *game=x4_recent_get(h,b->recent_selected);
     b->recent_selected_id[0]=0;
+    b->detail_scroll_offset = 0;
     if (game) memcpy(b->recent_selected_id,game->id,sizeof(b->recent_selected_id));
 }
 
@@ -323,10 +337,346 @@ bool x4_catalog_browser_page_move(X4CatalogBrowser *b,const X4CatalogSnapshot *c
     remember_selected(b,c); return old!=b->selected;
 }
 
+static bool add_unique_featured(X4CatalogBrowser *b, unsigned src)
+{
+    if (b->featured_count >= X4_CATALOG_FEATURED_MAX) return false;
+    for (unsigned i = 0; i < b->featured_count; ++i) {
+        if (b->featured_sources[i] == (uint16_t)src) return false;
+    }
+    b->featured_sources[b->featured_count++] = (uint16_t)src;
+    return true;
+}
+
+void x4_catalog_browser_rebuild_featured(X4CatalogBrowser *b,
+    const X4CatalogSnapshot *c, const X4RecentGames *h)
+{
+    if (!b) return;
+    b->apple_mode = true;
+    b->featured_count = 0;
+    if (!c || c->state != X4_CATALOG_READY || c->count == 0 || c->count > X4_CATALOG_MAX) {
+        b->featured_index = 0;
+        return;
+    }
+
+    /* 1. Recent games (MRU) that resolve in the current playable catalog */
+    unsigned rcount = x4_recent_count(h);
+    for (unsigned i = 0; i < rcount && b->featured_count < X4_CATALOG_FEATURED_MAX; ++i) {
+        unsigned src = 0;
+        if (x4_recent_catalog_index(x4_recent_get(h, i), c, &src) && src < c->count) {
+            add_unique_featured(b, src);
+        }
+    }
+
+    /* 2. Fortnite (productId BT5P2X999VH2 or titleId FORTNITE) if present in catalog */
+    for (unsigned i = 0; i < c->count && b->featured_count < X4_CATALOG_FEATURED_MAX; ++i) {
+        const X4CatalogTitle *t = &c->titles[i];
+        if (!x4_recent_title_id_valid(t->id, sizeof(t->id))) continue;
+        if (ascii_ieq(t->product_id, "BT5P2X999VH2") || ascii_ieq(t->id, "FORTNITE")) {
+            add_unique_featured(b, i);
+            break;
+        }
+    }
+
+    /* 3. First titles with confirmed access (entitled) */
+    for (unsigned i = 0; i < c->count && b->featured_count < X4_CATALOG_FEATURED_MAX; ++i) {
+        const X4CatalogTitle *t = &c->titles[i];
+        if (!x4_recent_title_id_valid(t->id, sizeof(t->id))) continue;
+        if (t->entitled) {
+            add_unique_featured(b, i);
+        }
+    }
+
+    /* 4. Fallback to first valid catalog titles if fewer than 4 were found */
+    for (unsigned i = 0; i < c->count && b->featured_count < X4_CATALOG_FEATURED_MAX; ++i) {
+        const X4CatalogTitle *t = &c->titles[i];
+        if (!x4_recent_title_id_valid(t->id, sizeof(t->id))) continue;
+        add_unique_featured(b, i);
+    }
+
+    if (b->featured_index >= b->featured_count) {
+        b->featured_index = 0;
+    }
+}
+
+unsigned x4_catalog_browser_discover_row_count(const X4CatalogBrowser *b,
+    const X4CatalogSnapshot *c, const X4RecentGames *h)
+{
+    (void)b;
+    unsigned rcount = x4_recent_count(h);
+    if (rcount > 0) return rcount;
+    if (!c || c->state != X4_CATALOG_READY || c->count == 0 || c->count > X4_CATALOG_MAX) return 0;
+    unsigned pcount = 0;
+    for (unsigned i = 0; i < c->count && pcount < X4_CATALOG_POPULAR_FALLBACK_MAX; ++i) {
+        if (c->titles[i].entitled && x4_recent_title_id_valid(c->titles[i].id, sizeof(c->titles[i].id)))
+            ++pcount;
+    }
+    if (pcount == 0) {
+        for (unsigned i = 0; i < c->count && pcount < X4_CATALOG_POPULAR_FALLBACK_MAX; ++i) {
+            if (x4_recent_title_id_valid(c->titles[i].id, sizeof(c->titles[i].id)))
+                ++pcount;
+        }
+    }
+    return pcount;
+}
+
+bool x4_catalog_browser_discover_row_source(const X4CatalogBrowser *b,
+    const X4CatalogSnapshot *c, const X4RecentGames *h,
+    unsigned row_idx, unsigned *source_index)
+{
+    (void)b;
+    if (!c || !source_index || c->state != X4_CATALOG_READY || c->count == 0 || c->count > X4_CATALOG_MAX)
+        return false;
+    unsigned rcount = x4_recent_count(h);
+    if (rcount > 0) {
+        if (row_idx >= rcount) return false;
+        return x4_recent_catalog_index(x4_recent_get(h, row_idx), c, source_index);
+    }
+    unsigned pcount = 0;
+    for (unsigned i = 0; i < c->count && pcount < X4_CATALOG_POPULAR_FALLBACK_MAX; ++i) {
+        if (c->titles[i].entitled && x4_recent_title_id_valid(c->titles[i].id, sizeof(c->titles[i].id))) {
+            if (pcount == row_idx) {
+                *source_index = i;
+                return true;
+            }
+            ++pcount;
+        }
+    }
+    if (pcount == 0) {
+        for (unsigned i = 0; i < c->count && pcount < X4_CATALOG_POPULAR_FALLBACK_MAX; ++i) {
+            if (x4_recent_title_id_valid(c->titles[i].id, sizeof(c->titles[i].id))) {
+                if (pcount == row_idx) {
+                    *source_index = i;
+                    return true;
+                }
+                ++pcount;
+            }
+        }
+    }
+    return false;
+}
+
+bool x4_catalog_browser_apple_nav(X4CatalogBrowser *b,
+    const X4CatalogSnapshot *c, const X4RecentGames *h,
+    int dx, int dy, int tab_delta)
+{
+    if (!b) return false;
+    b->apple_mode = true;
+    x4_catalog_browser_sync_recents(b, h);
+    x4_catalog_browser_rebuild_featured(b, c, h);
+
+    if (tab_delta != 0) {
+        int next_tab = ((int)b->active_tab + (tab_delta > 0 ? 1 : -1) + X4_CAT_TAB_COUNT) % X4_CAT_TAB_COUNT;
+        b->active_tab = (enum X4CatalogTab)next_tab;
+        b->detail_scroll_offset = 0;
+        if (b->top_bar_focused && b->top_bar_index < X4_CAT_TAB_COUNT) {
+            b->top_bar_index = (unsigned)b->active_tab;
+        }
+        if (b->active_tab == X4_CAT_TAB_CATALOG) {
+            b->section = X4_CATALOG_SECTION_CATALOG;
+        } else if (b->active_tab == X4_CAT_TAB_RECENTS) {
+            b->section = X4_CATALOG_SECTION_RECENT;
+        } else if (b->active_tab == X4_CAT_TAB_DISCOVER) {
+            b->hero_focused = true;
+        }
+        return true;
+    }
+
+    if (dx && dy) return false;
+    if (!dx && !dy) return false;
+
+    if (b->top_bar_focused) {
+        if (dx != 0) {
+            unsigned old = b->top_bar_index;
+            if (dx < 0 && b->top_bar_index > 0) b->top_bar_index--;
+            else if (dx > 0 && b->top_bar_index < 5) b->top_bar_index++;
+            if (b->top_bar_index <= 2) {
+                b->active_tab = (enum X4CatalogTab)b->top_bar_index;
+                b->detail_scroll_offset = 0;
+                if (b->active_tab == X4_CAT_TAB_CATALOG) b->section = X4_CATALOG_SECTION_CATALOG;
+                else if (b->active_tab == X4_CAT_TAB_RECENTS) b->section = X4_CATALOG_SECTION_RECENT;
+            }
+            return b->top_bar_index != old;
+        }
+        if (dy > 0) {
+            b->top_bar_focused = false;
+            if (b->active_tab == X4_CAT_TAB_DISCOVER) b->hero_focused = true;
+            return true;
+        }
+        return false;
+    }
+
+    if (b->active_tab == X4_CAT_TAB_DISCOVER) {
+        unsigned row_count = x4_catalog_browser_discover_row_count(b, c, h);
+        if (b->discover_row_selected >= row_count && row_count > 0)
+            b->discover_row_selected = row_count - 1;
+        if (b->hero_focused) {
+            if (dx != 0) {
+                if (b->featured_count <= 1) return false;
+                b->featured_index = (b->featured_index + (dx > 0 ? 1u : b->featured_count - 1u)) % b->featured_count;
+                return true;
+            }
+            if (dy > 0) {
+                if (row_count == 0) return false;
+                b->hero_focused = false;
+                return true;
+            }
+            if (dy < 0) {
+                b->top_bar_focused = true;
+                b->top_bar_index = X4_CAT_TAB_DISCOVER;
+                return true;
+            }
+        } else {
+            if (dx != 0) {
+                if (row_count == 0) return false;
+                int next = (int)b->discover_row_selected + (dx > 0 ? 1 : -1);
+                if (next < 0 || next >= (int)row_count) return false;
+                b->discover_row_selected = (unsigned)next;
+                if (x4_recent_count(h) > 0 && b->discover_row_selected < x4_recent_count(h)) {
+                    b->recent_selected = b->discover_row_selected;
+                    remember_recent(b, h);
+                }
+                return true;
+            }
+            if (dy < 0) {
+                b->hero_focused = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (b->active_tab == X4_CAT_TAB_CATALOG) {
+        b->section = X4_CATALOG_SECTION_CATALOG;
+        if (dy < 0 && (!b->filtered_count || (b->selected % X4_CATALOG_PAGE_SIZE) < X4_CATALOG_COLUMNS)) {
+            b->top_bar_focused = true;
+            b->top_bar_index = X4_CAT_TAB_CATALOG;
+            return true;
+        }
+        if (dx != 0 && b->filtered_count > 0) {
+            unsigned col = (b->selected % X4_CATALOG_PAGE_SIZE) % X4_CATALOG_COLUMNS;
+            if (dx > 0 && (col == X4_CATALOG_COLUMNS - 1 || b->selected + 1 >= b->filtered_count)) {
+                return x4_catalog_browser_page_move(b, c, h, 1);
+            }
+            if (dx < 0 && col == 0) {
+                return x4_catalog_browser_page_move(b, c, h, -1);
+            }
+        }
+        return x4_catalog_browser_grid_move(b, c, dx, dy);
+    }
+
+    if (b->active_tab == X4_CAT_TAB_RECENTS) {
+        b->section = X4_CATALOG_SECTION_RECENT;
+        unsigned rcount = x4_recent_count(h);
+        if (dy < 0 && (!rcount || (b->recent_selected % X4_CATALOG_PAGE_SIZE) < X4_CATALOG_COLUMNS)) {
+            b->top_bar_focused = true;
+            b->top_bar_index = X4_CAT_TAB_RECENTS;
+            return true;
+        }
+        if (!rcount) return false;
+        unsigned start = (b->recent_selected / X4_CATALOG_PAGE_SIZE) * X4_CATALOG_PAGE_SIZE;
+        unsigned local = b->recent_selected - start;
+        unsigned page_cnt = rcount - start;
+        if (page_cnt > X4_CATALOG_PAGE_SIZE) page_cnt = X4_CATALOG_PAGE_SIZE;
+        unsigned row = local / X4_CATALOG_COLUMNS;
+        unsigned col = local % X4_CATALOG_COLUMNS;
+        if (dx != 0) {
+            int next_col = (int)col + (dx > 0 ? 1 : -1);
+            if (next_col < 0) {
+                return x4_catalog_browser_page_move(b, c, h, -1);
+            }
+            if (next_col >= X4_CATALOG_COLUMNS || (unsigned)(row * X4_CATALOG_COLUMNS + (unsigned)next_col) >= page_cnt) {
+                return x4_catalog_browser_page_move(b, c, h, 1);
+            }
+            b->recent_selected = start + row * X4_CATALOG_COLUMNS + (unsigned)next_col;
+            remember_recent(b, h);
+            return true;
+        }
+        if (dy > 0) {
+            if (row + 1 >= X4_CATALOG_ROWS || X4_CATALOG_COLUMNS >= page_cnt) return false;
+            unsigned next_local = X4_CATALOG_COLUMNS + col;
+            if (next_local >= page_cnt) next_local = page_cnt - 1;
+            b->recent_selected = start + next_local;
+            remember_recent(b, h);
+            return true;
+        }
+        if (dy < 0 && row > 0) {
+            b->recent_selected = start + col;
+            remember_recent(b, h);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool x4_catalog_browser_activate_top_bar(X4CatalogBrowser *b)
+{
+    if (!b || !b->top_bar_focused) return false;
+    if (b->top_bar_index <= 2) {
+        b->active_tab = (enum X4CatalogTab)b->top_bar_index;
+        b->top_bar_focused = false;
+        b->detail_scroll_offset = 0;
+        if (b->active_tab == X4_CAT_TAB_CATALOG) b->section = X4_CATALOG_SECTION_CATALOG;
+        else if (b->active_tab == X4_CAT_TAB_RECENTS) b->section = X4_CATALOG_SECTION_RECENT;
+        else if (b->active_tab == X4_CAT_TAB_DISCOVER) b->hero_focused = true;
+    } else if (b->top_bar_index == 3) {
+        b->editing = true;
+        b->top_bar_focused = false;
+    } else if (b->top_bar_index == 4) {
+        b->open_settings_requested = true;
+    } else if (b->top_bar_index == 5) {
+        b->open_account_requested = true;
+    }
+    return true;
+}
+
+bool x4_catalog_browser_scroll_detail(X4CatalogBrowser *b, int delta)
+{
+    if (!b || delta == 0) return false;
+    if (delta < 0) {
+        if (b->detail_scroll_offset > 0) {
+            b->detail_scroll_offset--;
+            return true;
+        }
+    } else {
+        if (b->detail_scroll_offset < 100) {
+            b->detail_scroll_offset++;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool x4_catalog_browser_resolved_index(const X4CatalogBrowser *b,const X4CatalogSnapshot *c,
     const X4RecentGames *h,unsigned *source_index)
 {
     if (!b) return false;
+    if (b->apple_mode) {
+        if (!c || !source_index || c->state != X4_CATALOG_READY || c->count > X4_CATALOG_MAX)
+            return false;
+        if (b->active_tab == X4_CAT_TAB_DISCOVER) {
+            if (b->hero_focused) {
+                if (!b->featured_count || b->featured_index >= b->featured_count) return false;
+                unsigned src = b->featured_sources[b->featured_index];
+                if (src >= c->count || !x4_recent_title_id_valid(c->titles[src].id, sizeof(c->titles[src].id)))
+                    return false;
+                *source_index = src;
+                return true;
+            }
+            return x4_catalog_browser_discover_row_source(b, c, h, b->discover_row_selected, source_index);
+        }
+        if (b->active_tab == X4_CAT_TAB_RECENTS) {
+            if (!h || !h->account_generation || b->recent_account_generation != h->account_generation)
+                return false;
+            const X4RecentGame *game = x4_recent_get(h, b->recent_selected);
+            if (!game || strcmp(b->recent_selected_id, game->id)) return false;
+            return x4_recent_catalog_index(game, c, source_index);
+        }
+        if (b->active_tab == X4_CAT_TAB_CATALOG) {
+            return x4_catalog_browser_selected_index(b, c, source_index);
+        }
+        return false;
+    }
     if (b->section==X4_CATALOG_SECTION_CATALOG) return x4_catalog_browser_selected_index(b,c,source_index);
     if (b->section!=X4_CATALOG_SECTION_RECENT || !h || !h->account_generation ||
         b->recent_account_generation!=h->account_generation) return false;

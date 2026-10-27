@@ -19,6 +19,7 @@ int x4_catalog_assets_acquire(X4CatalogAssets*a,const char*id,X4CatalogAssetView
     return 0;
 }
 void x4_catalog_assets_release(X4CatalogAssets*a,X4CatalogAssetView*v){(void)a;(void)v;}
+bool x4_server_settings_awaiting_first_choice(void) { return false; }
 static unsigned char*read_file(const char*path,size_t*n)
 {
     FILE*f=fopen(path,"rb");if(!f)return NULL;

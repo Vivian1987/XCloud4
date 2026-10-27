@@ -19,12 +19,17 @@ OO_PS4_TOOLCHAIN="${OO_PS4_TOOLCHAIN:-$HOME/.local/share/xcloud4/OpenOrbis/PS4To
     "${REPO_ROOT}/src/auth/release_check.c" \
     "${REPO_ROOT}/src/auth/json.c" \
     "${REPO_ROOT}/src/ui/screen.c" \
+    "${REPO_ROOT}/src/ui/apple_ui.c" \
     "${REPO_ROOT}/src/ui/canvas.c" \
     "${REPO_ROOT}/src/ui/font.c" \
     "${REPO_ROOT}/src/ui/lang.c" \
+    "${REPO_ROOT}/src/ui/net_hint.c" \
+    "${REPO_ROOT}/src/ui/server_settings.c" \
+    "${REPO_ROOT}/src/ui/picture_settings.c" \
+    "${REPO_ROOT}/src/streaming/stream_profile.c" \
     "${REPO_ROOT}/src/input/touch_menu.c" \
     "${REPO_ROOT}/third_party/qrcodegen/qrcodegen.c" \
-    -o "${BUILD_DIR}/test_update_qr"
+    -lm -o "${BUILD_DIR}/test_update_qr"
 
 "${BUILD_DIR}/test_update_qr"
 echo "PASS: test_update_qr.sh"

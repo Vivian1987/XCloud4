@@ -1,13 +1,26 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "stream_profile.h"
+#if X4_PUBLIC
+#include "../ui/picture_settings.h"
+#endif
 #include "../ui/lang.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
 /* One atomic word publishes all menu selections together. There is no
- * persistence, polling, lock or process-global mutable session description. */
-static atomic_uint settings = X4_REQUEST_720P_HQ;
+ * persistence, polling, lock or process-global mutable session description.
+ * Default in lab matches Public 1080p Alta:
+ * Profile 1080p-G (1), Color Auto 709 (0), CPU 0 (0), Depth Auto (0),
+ * VSync OFF (X4_INTERACTION_VSYNC_OFF = 8u << 8),
+ * convert_mode: Suave (1u << 12),
+ * sharpness: Media (2u << 13),
+ * resolution_request_mode: 0 (Cada 300 ms, 0u << 15). */
+static atomic_uint settings = (unsigned)X4_REQUEST_1080P_G |
+    ((unsigned)X4_INTERACTION_VSYNC_OFF << 8) |
+    (1u << 12) |
+    (2u << 13) |
+    (0u << 15);
 
 X4StreamRequestConfig x4_stream_request_config(X4StreamRequestProfile profile,
     X4StreamColorPreference color)
@@ -35,10 +48,14 @@ X4StreamRequestConfig x4_stream_settings_get(void)
 {
 #if X4_PUBLIC
     (void)settings;
-    X4StreamRequestConfig result=x4_stream_request_config(X4_REQUEST_1080P_G8,X4_COLOR_AUTO_709);
+    X4StreamRequestProfile profile=x4_picture_settings_current_profile();
+    X4StreamRequestConfig result=x4_stream_request_config(profile,X4_COLOR_AUTO_709);
     result.cpu_variant=X4_CPU_0;
     result.decoder_depth=X4_DEPTH_AUTO;
     result.interaction_modes=X4_INTERACTION_VSYNC_OFF;
+    result.convert_mode=X4_CONVERT_SMOOTH_DEFAULT;
+    result.sharpness=X4_SHARPNESS_PUBLIC_DEFAULT;
+    result.resolution_request_mode=0;
     return result;
 #else
     unsigned word=atomic_load_explicit(&settings,memory_order_acquire);
@@ -47,6 +64,9 @@ X4StreamRequestConfig x4_stream_settings_get(void)
     result.cpu_variant=(unsigned char)((word>>4)&3u);
     result.decoder_depth=(unsigned char)((word>>6)&3u);
     result.interaction_modes=(unsigned char)((word>>8)&X4_INTERACTION_MASK);
+    result.convert_mode=(unsigned char)((word>>12)&1u);
+    result.sharpness=(unsigned char)((word>>13)&3u);
+    result.resolution_request_mode=(unsigned char)((word>>15)&3u);
     return result;
 #endif
 }
@@ -54,7 +74,7 @@ bool x4_stream_settings_set(X4StreamRequestProfile profile, X4StreamColorPrefere
 {
     if ((unsigned)profile>X4_REQUEST_PROFILE_MAX || (unsigned)color>X4_COLOR_FORCE_601) return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0xff0u)|(unsigned)profile|((unsigned)color<<3); }
+    do { desired=(old&~0x0fu)|(unsigned)profile|((unsigned)color<<3); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;
 }
@@ -62,7 +82,7 @@ bool x4_stream_settings_set_cpu(X4StreamRequestProfile profile,X4StreamColorPref
 {
     if((unsigned)profile>X4_REQUEST_PROFILE_MAX||(unsigned)color>X4_COLOR_FORCE_601||(unsigned)cpu>X4_CPU_3)return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0xfc0u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4); }
+    do { desired=(old&~0x3fu)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;
 }
@@ -72,7 +92,7 @@ bool x4_stream_settings_set_all(X4StreamRequestProfile profile,X4StreamColorPref
     if((unsigned)profile>X4_REQUEST_PROFILE_MAX||(unsigned)color>X4_COLOR_FORCE_601||
         (unsigned)cpu>X4_CPU_3||(unsigned)depth>X4_DEPTH_2)return false;
     unsigned old=atomic_load_explicit(&settings,memory_order_acquire), desired;
-    do { desired=(old&0xf00u)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4)|
+    do { desired=(old&~0xffu)|(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4)|
         ((unsigned)depth<<6); }
     while(!atomic_compare_exchange_weak_explicit(&settings,&old,desired,memory_order_release,memory_order_acquire));
     return true;
@@ -80,10 +100,22 @@ bool x4_stream_settings_set_all(X4StreamRequestProfile profile,X4StreamColorPref
 bool x4_stream_settings_set_extended(X4StreamRequestProfile profile,X4StreamColorPreference color,
     X4StreamCpuVariant cpu,X4StreamDecoderDepth depth,unsigned interaction_modes)
 {
+    unsigned old=atomic_load_explicit(&settings,memory_order_acquire);
+    unsigned char convert_mode=(unsigned char)((old>>12)&1u);
+    unsigned char sharpness=(unsigned char)((old>>13)&3u);
+    unsigned char req_mode=(unsigned char)((old>>15)&3u);
+    return x4_stream_settings_set_lab(profile,color,cpu,depth,interaction_modes,convert_mode,sharpness,req_mode);
+}
+bool x4_stream_settings_set_lab(X4StreamRequestProfile profile,X4StreamColorPreference color,
+    X4StreamCpuVariant cpu,X4StreamDecoderDepth depth,unsigned interaction_modes,
+    unsigned char convert_mode,unsigned char sharpness,unsigned char resolution_request_mode)
+{
     if((unsigned)profile>X4_REQUEST_PROFILE_MAX||(unsigned)color>X4_COLOR_FORCE_601||
-        (unsigned)cpu>X4_CPU_3||(unsigned)depth>X4_DEPTH_2||interaction_modes>X4_INTERACTION_MASK)return false;
+        (unsigned)cpu>X4_CPU_3||(unsigned)depth>X4_DEPTH_2||interaction_modes>X4_INTERACTION_MASK||
+        convert_mode>1||sharpness>2||resolution_request_mode>2)return false;
     atomic_store_explicit(&settings,(unsigned)profile|((unsigned)color<<3)|((unsigned)cpu<<4)|
-        ((unsigned)depth<<6)|(interaction_modes<<8),memory_order_release);
+        ((unsigned)depth<<6)|(interaction_modes<<8)|((unsigned)convert_mode<<12)|
+        ((unsigned)sharpness<<13)|((unsigned)resolution_request_mode<<15),memory_order_release);
     return true;
 }
 X4StreamRequestConfig x4_stream_request_capture(const X4StreamRequestConfig *request)
@@ -93,6 +125,15 @@ X4StreamRequestConfig x4_stream_request_capture(const X4StreamRequestConfig *req
     c.cpu_variant=request->cpu_variant<=X4_CPU_3?request->cpu_variant:X4_CPU_0;
     c.decoder_depth=request->decoder_depth<=X4_DEPTH_2?request->decoder_depth:X4_DEPTH_AUTO;
     c.interaction_modes=(unsigned char)(request->interaction_modes&X4_INTERACTION_MASK);
+#if X4_PUBLIC
+    c.convert_mode=X4_CONVERT_SMOOTH_DEFAULT;
+    c.sharpness=X4_SHARPNESS_PUBLIC_DEFAULT;
+    c.resolution_request_mode=0;
+#else
+    c.convert_mode=request->convert_mode<=1?request->convert_mode:X4_CONVERT_SMOOTH_DEFAULT;
+    c.sharpness=request->sharpness<=2?request->sharpness:0;
+    c.resolution_request_mode=request->resolution_request_mode<=2?request->resolution_request_mode:0;
+#endif
     return c;
 }
 unsigned x4_stream_request_resolve_depth(const X4StreamRequestConfig *request,unsigned width,unsigned height)

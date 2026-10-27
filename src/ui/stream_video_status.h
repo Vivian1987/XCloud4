@@ -16,6 +16,10 @@ static inline int x4_stream_video_error_text(char *out, size_t capacity,
     uint32_t width, uint32_t height, int error)
 {
     if (!out || !capacity) return -1;
+    if (error == -7433) {
+        int n = snprintf(out, capacity, "%s", x4_tr(X4_TR_VIDEO_NO_FRAMES));
+        return n >= 0 && (size_t)n < capacity ? 0 : -1;
+    }
 #if X4_PUBLIC
     int n = width && height ?
         snprintf(out, capacity, x4_tr(X4_TR_VIDEO_REJECTED_DIM_PUBLIC_FMT), width, height) :
@@ -30,6 +34,10 @@ static inline int x4_stream_video_error_text(char *out, size_t capacity,
 static inline int x4_stream_video_error_caption(char *out, size_t capacity, int error)
 {
     if (!out || !capacity) return -1;
+    if (error == -7433) {
+        int n = snprintf(out, capacity, "%s", x4_tr(X4_TR_VIDEO_NO_FRAMES));
+        return n >= 0 && (size_t)n < capacity ? 0 : -1;
+    }
 #if X4_PUBLIC
     int n = snprintf(out, capacity, x4_tr(X4_TR_VIDEO_STOPPED_PUBLIC_FMT), error);
 #else

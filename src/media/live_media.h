@@ -113,6 +113,7 @@ int x4_live_media_stream_present(X4LiveMedia *media,
 /* Same-main-owner observation, no new lock: choose 1 ms while conversion or
  * flip is in flight, otherwise 5 ms. Not a cross-thread snapshot. */
 unsigned x4_live_media_stream_main_state(const X4LiveMedia *media);
+void x4_live_media_stream_note_menu_open(X4LiveMedia *media,bool open);
 void x4_live_media_stream_note_controller_read(X4LiveMedia *media,uint64_t sampled_us);
 /* Native blocking wake hint. */
 int x4_live_media_stream_wait(X4LiveMedia *media,unsigned timeout_us);
@@ -182,6 +183,8 @@ void x4_live_media_set_muted(X4LiveMedia *media, bool muted);
 /* Thread-safe: returns true once per pending keyframe request so the
  * transport owner can call x4_rtc_request_keyframe. */
 bool x4_live_media_take_keyframe_request(X4LiveMedia *media);
+uint64_t x4_live_media_post_halt_video_packets(const X4LiveMedia *media);
+uint64_t x4_live_media_first_post_halt_video_us(const X4LiveMedia *media);
 /* Stops/joins the owner before freeing storage. Returns 0 when released.
  * A native video teardown failure is latched: future close calls retain the
  * context and return that error; main never retries native video teardown. */

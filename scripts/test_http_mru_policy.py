@@ -28,14 +28,15 @@ constants=[]
 for name in names:
     pos=source.index(name)
     start=source.rfind("\n",0,pos)+1
-    end=source.index(";",pos)+1
+    line_end=source.index("\n",pos)
+    end=line_end if source[start:line_end].startswith("#define ") else source.index(";",pos)+1
     constants.append(source[start:end])
 macros=[]
 for line in source.splitlines():
     if any(line.startswith("#define " + n + " ") for n in ["X4_HTTP_JSON_URL_MAX", "X4_HTTP_STORE_IDS_MAX", "X4_HTTP_STORE_ID_MAX", "X4_HTTP_REGION_LABELS_MAX"]): macros.append(line)
 enum_start=source.index("enum Destination {")
 enum=source[enum_start:source.index(";",enum_start)+1]
-program="\n".join(["#include <stdbool.h>","#include <stddef.h>","#include <string.h>","#include <stdio.h>","#include <assert.h>",*macros,*constants,enum,*[function(n) for n in ["bounded_length","alphanumeric","region_host","store_url","classify"]]])
+program="\n".join(["#include <stdbool.h>","#include <stddef.h>","#include <string.h>","#include <stdio.h>","#include <assert.h>",'#include "lang.h"',*macros,*constants,enum,*[function(n) for n in ["bounded_length","alphanumeric","region_host","store_url","classify"]]])
 program += r'''
 int main(void) {
  const char *good[] = {
@@ -65,6 +66,6 @@ int main(void) {
 with tempfile.TemporaryDirectory(prefix="x4-mru-policy-") as directory:
     path=Path(directory)
     (path/"policy.c").write_text(program,encoding="utf8")
-    subprocess.run([os.environ.get("CC","cc"),"-std=c11","-Wall","-Wextra","-Werror",str(path/"policy.c"),"-o",str(path/"policy")],check=True)
+    subprocess.run([os.environ.get("CC","cc"),"-std=c11","-Wall","-Wextra","-Werror","-I",str(root/"src/ui"),str(path/"policy.c"),str(root/"src/ui/lang.c"),"-o",str(path/"policy")],check=True)
     subprocess.run([str(path/"policy")],check=True)
 print("classifier source SHA256:",hashlib.sha256(source.encode("utf8")).hexdigest())

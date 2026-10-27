@@ -29,6 +29,8 @@ int x4_json_parse(const char *json, size_t length, X4JsonSpan *root);
 X4JsonType x4_json_type(X4JsonSpan value);
 /* 1 found, 0 absent, -1 when not an object or the name appears twice. */
 int x4_json_member(X4JsonSpan object, const char *name, X4JsonSpan *out);
+/* Object iteration; *cursor starts at 0. 1 member, 0 end, -1 not an object. */
+int x4_json_object_member(X4JsonSpan object, size_t *cursor, X4JsonSpan *key, X4JsonSpan *val);
 /* Array iteration; *cursor starts at 0. 1 item, 0 end, -1 not an array. */
 int x4_json_item(X4JsonSpan array, size_t *cursor, X4JsonSpan *item);
 int x4_json_bool(X4JsonSpan value, int *out);

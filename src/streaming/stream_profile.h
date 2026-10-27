@@ -43,6 +43,13 @@ enum {
     X4_INTERACTION_VSYNC_OFF = 8u,
     X4_INTERACTION_MASK = 15u
 };
+#ifndef X4_CONVERT_SMOOTH_DEFAULT
+#define X4_CONVERT_SMOOTH_DEFAULT 1
+#endif
+#ifndef X4_SHARPNESS_PUBLIC_DEFAULT
+#define X4_SHARPNESS_PUBLIC_DEFAULT 2
+#endif
+
 typedef struct X4StreamRequestConfig {
     X4StreamRequestProfile profile;
     X4StreamColorPreference color_preference;
@@ -53,6 +60,9 @@ typedef struct X4StreamRequestConfig {
     unsigned char cpu_variant;
     unsigned char decoder_depth;
     unsigned char interaction_modes;
+    unsigned char convert_mode; /* 0 = Original, 1 = Suave */
+    unsigned char sharpness;    /* 0 = No, 1 = Baja, 2 = Media */
+    unsigned char resolution_request_mode; /* 0 = Cada 300 ms, 1 = Una vez, 2 = Repetir c/5s */
     unsigned h264_profile, max_fs, max_mbps;
 } X4StreamRequestConfig;
 
@@ -66,6 +76,9 @@ bool x4_stream_settings_set_all(X4StreamRequestProfile, X4StreamColorPreference,
     X4StreamCpuVariant, X4StreamDecoderDepth);
 bool x4_stream_settings_set_extended(X4StreamRequestProfile, X4StreamColorPreference,
     X4StreamCpuVariant, X4StreamDecoderDepth, unsigned interaction_modes);
+bool x4_stream_settings_set_lab(X4StreamRequestProfile, X4StreamColorPreference,
+    X4StreamCpuVariant, X4StreamDecoderDepth, unsigned interaction_modes,
+    unsigned char convert_mode, unsigned char sharpness, unsigned char resolution_request_mode);
 X4StreamRequestConfig x4_stream_request_capture(const X4StreamRequestConfig *);
 #if X4_STREAM_PROFILE
 #include <stdio.h>

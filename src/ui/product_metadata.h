@@ -9,6 +9,7 @@ typedef struct {
     char product_id[X4_PRODUCT_ID_CAP];
     char name[128], publisher[128], developer[128], category[64], description[512];
     char cover_url[X4_PUBLIC_COVER_URL_CAP];
+    char hero_url[X4_PUBLIC_COVER_URL_CAP];
 } X4ProductMetadata;
 
 int x4_product_id_valid(const char *id);
@@ -25,4 +26,5 @@ typedef struct { X4CoverRaster surface[X4_COVER_SURFACES]; } X4CoverRasters;
  * aggregate decoder allocations<=16MiB. All three aspect-fit rasters are
  * produced once, and never resized during drawing. */
 int x4_cover_decode(const unsigned char *encoded, size_t length, X4CoverRasters *out);
+int x4_hero_decode(const unsigned char *encoded, size_t length, X4CoverRaster *out);
 void x4_cover_rasters_free(X4CoverRasters *out);

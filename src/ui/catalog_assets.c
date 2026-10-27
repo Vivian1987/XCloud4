@@ -364,6 +364,31 @@ static void process_image(X4CatalogAssets *a,X4Http **http,X4CatalogDiskCache *d
     /* Cache only successfully decoded public bytes; never failed responses. */
     if(disk&&source==X4_ASSET_NETWORK&&!atomic_load(&a->cancel))
         x4_catalog_disk_cache_put_image(disk,j->id,MARKET,LANGUAGE,m.cover_url,encoded,length,&a->cancel);
+
+    /* If a distinct panoramic hero URL (SuperHeroArt / TitledHeroArt) exists,
+     * fetch and decode it into the 16:9 X4_COVER_DETAIL (512x288) surface. */
+    if(m.hero_url[0]&&strcmp(m.hero_url,m.cover_url)!=0&&needed(a,j)){
+        size_t h_len=0;
+        int h_status=0,h_rc=0;
+        int h_hit=disk?x4_catalog_disk_cache_get_image(disk,j->id,MARKET,LANGUAGE,m.hero_url,encoded,X4_HTTP_IMAGE_MAX+1u,&h_len,&a->cancel):0;
+        if(h_hit!=1&&needed(a,j)){
+            int open_err=0;
+            if(!*http)*http=x4_http_open(&open_err);
+            h_rc=*http?x4_http_public_image_request(*http,m.hero_url,encoded,X4_HTTP_IMAGE_MAX+1u,&h_len,&h_status,&a->cancel):open_err?open_err:X4_HTTP_ALLOCATION;
+        }else if(h_hit==1){
+            h_status=200;
+        }
+        if(!h_rc&&h_status==200&&h_len>0&&needed(a,j)){
+            X4CoverRaster hero_r={0};
+            if(!x4_hero_decode(encoded,h_len,&hero_r)){
+                if(disk&&h_hit!=1&&!atomic_load(&a->cancel))
+                    x4_catalog_disk_cache_put_image(disk,j->id,MARKET,LANGUAGE,m.hero_url,encoded,h_len,&a->cancel);
+                free(cover.surface[X4_COVER_DETAIL].rgba);
+                cover.surface[X4_COVER_DETAIL]=hero_r;
+            }
+        }
+    }
+
     start=now(a);
     lock(&a->mutex);
     s=job_slot(a,j);

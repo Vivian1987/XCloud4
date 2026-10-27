@@ -225,3 +225,11 @@ int x4_stream_diagnostics_write(FILE *f,const X4StreamDiagnostics *constant,uint
     }
     fputc('}',f);write_new_diagnostics(f,d,ended,complete);fputc('}',f);return ferror(f)?-1:0;
 }
+bool x4_stream_diagnostics_stage_percentile(const X4StreamDiagnostics *d, X4StreamStage stage,
+    unsigned p, uint64_t *out_us, uint64_t *out_max_us)
+{
+    if (!d || (unsigned)stage >= X4_STREAM_STAGE_COUNT) return false;
+    const Stage *s = &d->stage[stage];
+    if (out_max_us) *out_max_us = s->maximum;
+    return percentile(s, p, out_us);
+}

@@ -60,6 +60,9 @@ int x4_rtc_next_local_candidate(X4Rtc *, char *candidate, size_t capacity,
                                 char *mid, size_t mid_capacity);
 int x4_rtc_set_remote_description(X4Rtc *, const char *sdp);
 int x4_rtc_add_remote_candidate(X4Rtc *, const char *candidate, const char *mid);
+int x4_rtc_get_selected_candidate_pair(X4Rtc *, char *local, size_t local_cap, char *remote, size_t remote_cap);
+int x4_rtc_get_rtt_ms(X4Rtc *);
+void x4_rtc_get_sdp_video(const X4Rtc *, uint32_t *ssrc, uint32_t *pt, char *mid, size_t mid_cap);
 void x4_rtc_snapshot(X4Rtc *, X4RtcSnapshot *);
 /* Preserve a queued keyframe request until startup has locally sent its
  * resolution alias. This does not acknowledge the resolution delivered. */

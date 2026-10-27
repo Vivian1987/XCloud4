@@ -23,6 +23,7 @@ _Static_assert(sizeof(struct sockaddr_storage)==128 &&
                offsetof(struct sockaddr_storage,ss_family)==1,
                "Compile RTC with the OpenOrbis BSD sockaddr overlay");
 
+static atomic_flag prepare_lock = ATOMIC_FLAG_INIT;
 static atomic_flag dns_lock = ATOMIC_FLAG_INIT;
 static int dns_pool = -1;
 static int32_t (*pool_create)(const char *, int32_t, int32_t);
@@ -35,12 +36,23 @@ static int32_t (*ctl_init)(void);
 int x4_native_net_prepare(void)
 {
     if (dns_pool >= 0) return 0;
+    while (atomic_flag_test_and_set_explicit(&prepare_lock, memory_order_acquire)) {}
+    if (dns_pool >= 0) {
+        atomic_flag_clear_explicit(&prepare_lock, memory_order_release);
+        return 0;
+    }
     int net = x4_module_open("libSceNet");
     int ctl = x4_module_open("libSceNetCtl");
-    if (net < 0 || ctl < 0) return -1;
+    if (net < 0 || ctl < 0) {
+        atomic_flag_clear_explicit(&prepare_lock, memory_order_release);
+        return -1;
+    }
     void *p = NULL;
 #define RESOLVE(m, symbol, dst) do { \
-    if (x4_module_symbol(m, symbol, &p) < 0) return -1; \
+    if (x4_module_symbol(m, symbol, &p) < 0) { \
+        atomic_flag_clear_explicit(&prepare_lock, memory_order_release); \
+        return -1; \
+    } \
     dst = (typeof(dst))p; \
 } while (0)
     RESOLVE(net, "sceNetPoolCreate", pool_create);
@@ -55,12 +67,17 @@ int x4_native_net_prepare(void)
     /* A negative Init may mean the app already initialized NetCtl. Adopt
      * that context only when a real GetInfo operation succeeds; no guessed
      * firmware-specific already-initialized error code is accepted. */
-    if (ctl_get_info(ORBIS_NET_CTL_INFO_IP_ADDRESS, &info) < 0) return -1;
+    if (ctl_get_info(ORBIS_NET_CTL_INFO_IP_ADDRESS, &info) < 0) {
+        atomic_flag_clear_explicit(&prepare_lock, memory_order_release);
+        return -1;
+    }
     printf("XCloud4: RTC NetCtl preparado init=0x%08x\n", (unsigned)init_rc);
     /* HTTPS initialized the process-global Net API before session creation.
      * This dedicated resolver pool remains alive until native process exit. */
     dns_pool = pool_create("x4-rtc-dns", 64 * 1024, 0);
-    return dns_pool >= 0 ? 0 : -1;
+    int rc = dns_pool >= 0 ? 0 : -1;
+    atomic_flag_clear_explicit(&prepare_lock, memory_order_release);
+    return rc;
 }
 
 typedef struct {

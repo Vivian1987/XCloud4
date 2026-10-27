@@ -124,6 +124,7 @@ enum X4HttpSessionMethod { X4_SESSION_HTTP_GET, X4_SESSION_HTTP_POST, X4_SESSION
  * rules. Exactly these method/path pairs are accepted:
  *   POST JSON  /v5/sessions/cloud/play            (non-empty JSON body)
  *   GET        /v5/sessions/cloud/<id>/state      (json NULL)
+ *   GET        /v1/waittime/<titleId>             (json NULL; optional queue ETA)
  *   POST       /v5/sessions/cloud/<id>/keepalive  (json "", empty body)
  *   POST JSON  /v5/sessions/cloud/<id>/connect    (non-empty JSON body)
  *   GET        /v5/sessions/cloud/<id>/sdp        (json NULL)
@@ -132,7 +133,8 @@ enum X4HttpSessionMethod { X4_SESSION_HTTP_GET, X4_SESSION_HTTP_POST, X4_SESSION
  *   POST JSON  /v5/sessions/cloud/<id>/ice        (non-empty JSON body)
  *   DELETE     /v5/sessions/cloud/<id>            (json NULL)
  * <id> is 1..128 of [A-Za-z0-9_-] (GUIDs included) and never "play" or
- * "active". No query, fragment, escape, dot segment, port or userinfo.
+ * "active". <titleId> is 1..95 of [A-Za-z0-9_-]. No query, fragment,
+ * escape, dot segment, port or userinfo.
  * Exactly three headers are required, once each: Authorization
  * ("Bearer <token68>"), x-gssv-client and X-MS-Device-Info. Header values
  * and bodies stay private. capacity is at most X4_HTTP_RESPONSE_MAX + 1. */

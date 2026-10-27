@@ -199,7 +199,7 @@ struct X4LiveMedia {
     uint32_t timestamp, discard_timestamp;
     uint8_t fu_type;
     bool fu, au_open, idr, damaged, waiting_keyframe, discard_timestamp_valid;
-    atomic_bool started, stop, start_complete, reset_maxima;
+    atomic_bool started, stop, start_complete, reset_maxima, video_stopped;
     atomic_int start_result;
     OrbisPthread thread;
     bool running;
@@ -213,7 +213,10 @@ struct X4LiveMedia {
     int audio_error, audio_payload_type;
     atomic_bool keyframe, ingress_gap;
     atomic_uint_fast64_t packets, dropped, requests;
+    atomic_uint_fast64_t post_halt_video_packets, first_post_halt_video_us;
     uint64_t lost, dropped_frames;
+    bool stall_tracking;
+    uint64_t stall_since_us, stall_last_dequeue;
     /* Maps live in the heap context rather than growing the UI stack. */
     uint16_t scale_x[X4_WIDTH];
     uint32_t scale_y[X4_HEIGHT];
@@ -269,6 +272,12 @@ static void mailbox_unlock(X4LiveMedia *m) {
 #else
     atomic_flag_clear_explicit(&m->mailbox_gate, memory_order_release);
 #endif
+}
+static inline void set_video_error(X4LiveMedia *m, int err)
+{
+    if (!m) return;
+    m->video.error = err;
+    if (err) atomic_store_explicit(&m->video_stopped, true, memory_order_release);
 }
 static void *video_worker(void *context);
 #if X4_VIDEO_PROBE
@@ -456,7 +465,7 @@ static void depacketize(X4LiveMedia *m, const X4LiveRtp *r, const X4IngressTicke
      * native output. Recovery retains its existing pre-Decode boundary. */
     int rc = x4_stream_pipeline_submit_parameters(m->stream, m->au, m->au_size,
         (uint64_t)m->timestamp * 1000000 / 90000, m->trace_au, m->sps, m->sps_size,m->pps,m->pps_size);
-    if (rc < 0) m->video.error = rc;
+    if (rc < 0) set_video_error(m, rc);
     if(rc==0) {
         ++m->au_submitted;
         x4_trace_record(m->trace,X4_TRACE_AU_VALID,
@@ -535,6 +544,8 @@ X4LiveMedia *x4_live_media_create_request(int *error, const X4StreamRequestConfi
 #endif
     atomic_init(&m->packets, 0); atomic_init(&m->dropped, 0); atomic_init(&m->requests, 0);
     atomic_init(&m->started, false); atomic_init(&m->stop, false); atomic_init(&m->start_complete, false);
+    atomic_init(&m->video_stopped, false);
+    atomic_init(&m->post_halt_video_packets, 0); atomic_init(&m->first_post_halt_video_us, 0);
     atomic_init(&m->reset_maxima, false); atomic_init(&m->start_result, X4_LIVE_ERR_THREAD);
     atomic_init(&m->callback_active, 0); atomic_init(&m->callback_peak, 0);
     atomic_init(&m->callback_calls, 0); atomic_init(&m->callback_overlap, 0);
@@ -632,6 +643,8 @@ X4LiveMedia *x4_live_media_probe_create_memory(const X4ProbeCase *sample, X4Prob
     atomic_init(&m->keyframe, false); atomic_init(&m->ingress_gap, false);
     atomic_init(&m->packets, 0); atomic_init(&m->dropped, 0); atomic_init(&m->requests, 0);
     atomic_init(&m->started, false); atomic_init(&m->stop, false); atomic_init(&m->start_complete, false);
+    atomic_init(&m->video_stopped, false);
+    atomic_init(&m->post_halt_video_packets, 0); atomic_init(&m->first_post_halt_video_us, 0);
     atomic_init(&m->reset_maxima, false); atomic_init(&m->start_result, X4_LIVE_ERR_THREAD);
     atomic_init(&m->callback_active, 0); atomic_init(&m->callback_peak, 0);
     atomic_init(&m->callback_calls, 0); atomic_init(&m->callback_overlap, 0);
@@ -767,6 +780,18 @@ void x4_live_media_receive(void *context, int kind, const uint8_t *p, size_t siz
         x4_live_audio_receive(m->audio, p, size); return;
     }
     if (kind != X4_LIVE_KIND_VIDEO) return;
+    if (atomic_load_explicit(&m->video_stopped, memory_order_acquire) ||
+        !atomic_load_explicit(&m->ingress.accepting, memory_order_acquire)) {
+        uint64_t post_halt_now = sceKernelGetProcessTime();
+        atomic_fetch_add_explicit(&m->post_halt_video_packets, 1, memory_order_relaxed);
+        uint64_t empty = 0;
+        (void)atomic_compare_exchange_strong_explicit(&m->first_post_halt_video_us, &empty, post_halt_now,
+            memory_order_release, memory_order_relaxed);
+#if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
+        x4_stream_pipeline_note_post_halt_video(m->stream, post_halt_now);
+#endif
+        return;
+    }
     uint64_t callback_begin = sceKernelGetProcessTime();
     unsigned active = atomic_fetch_add_explicit(&m->callback_active, 1, memory_order_relaxed) + 1;
     unsigned peak = atomic_load_explicit(&m->callback_peak, memory_order_relaxed);
@@ -1218,7 +1243,7 @@ static void prepare_worker_view(X4LiveMedia *m, X4LiveMediaSnapshot *out)
     m->video.no_picture_calls = stream.decode_calls >= stream.outputs ? stream.decode_calls - stream.outputs : 0;
     m->video.decode_us = stream.decode_us; m->video.decode_max_us = stream.decode_max_us;
     m->video.convert_us = stream.convert_us; m->video.convert_max_us = stream.convert_max_us;
-    if (stream.error) m->video.error = stream.error;
+    if (stream.error) set_video_error(m, stream.error);
 #endif
     X4LiveMediaSnapshot s = {0};
     const X4LiveVideo *v = &m->video, *t = &m->video_totals;
@@ -1504,7 +1529,7 @@ static void video_batch(X4LiveMedia *m)
     x4_trace_monitor_state(m->trace, X4_MON_ACTOR_WORKER, X4_MON_PHASE_ASSEMBLE, 0);
 #if !X4_STREAM_PROFILE || X4_VIDEO_PROBE
     if (x4_live_video_set_target(&m->video, m->rgb[slot].pixels, (size_t)X4_LIVE_RGB_PIXELS) < 0) {
-        m->video.error = X4_LIVE_ERR_DECODER; finish_rgb(m, slot, false); return;
+        set_video_error(m, X4_LIVE_ERR_DECODER); finish_rgb(m, slot, false); return;
     }
     uint64_t begin = sceKernelGetProcessTime(), decode_begin = m->video.decode_calls;
     uint64_t frame_begin = m->video.frames;
@@ -1535,7 +1560,7 @@ static void video_batch(X4LiveMedia *m)
             if (x4_video_ingress_depth(&m->ingress)) {
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
                 int waited=x4_stream_wait_block(&m->ingress_wait,1000);
-                if(waited<0){m->video.error=waited;atomic_store(&m->stop,true);}
+                if(waited<0){set_video_error(m, waited);atomic_store(&m->stop,true);}
 #else
                 sceKernelUsleep(50);
 #endif
@@ -1573,7 +1598,7 @@ static void video_batch(X4LiveMedia *m)
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
                 /* A new source needs a new streaming session and native
                  * ownership graph. Do not replace a decoder behind readers. */
-                m->video.error = X4_LIVE_ERR_STATE;
+                set_video_error(m, X4_LIVE_ERR_STATE);
                 x4_stream_pipeline_request_stop(m->stream); goto finish;
 #else
                 int rc = x4_live_video_stop(&m->video); if (rc < 0) goto finish;
@@ -1924,7 +1949,7 @@ static void *video_worker(void *context)
     if(cpu_rc)printf("XCloud4: assembly CPU settings rc=%d; variante parcialmente aplicada, continua\n",cpu_rc);
     int rc = x4_stream_pipeline_start(m->stream);
     if(rc>0)rc=-rc;
-    if(rc<0)m->video.error=rc;
+    if(rc<0)set_video_error(m, rc);
 #else
     int rc = x4_live_video_start(&m->video, m->rgb[0].pixels, (size_t)X4_LIVE_RGB_PIXELS);
 #endif
@@ -1943,6 +1968,35 @@ static void *video_worker(void *context)
         reset_worker_maxima(m);
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
         assembly_keyframe_retry(m,sceKernelGetProcessTime());
+        if (atomic_load_explicit(&m->started, memory_order_acquire) && !m->video.error) {
+            uint32_t q_depth = x4_video_ingress_depth(&m->ingress);
+            uint64_t cur_deq = atomic_load_explicit(&m->ingress.dequeue, memory_order_relaxed);
+            uint64_t now_w_us = sceKernelGetProcessTime();
+            if (q_depth >= m->ingress.capacity) {
+                if (!m->stall_tracking || cur_deq != m->stall_last_dequeue) {
+                    m->stall_tracking = true;
+                    m->stall_since_us = now_w_us;
+                    m->stall_last_dequeue = cur_deq;
+                } else if (now_w_us - m->stall_since_us >= 500000) {
+                    if (x4_video_ingress_quiesce_reset(&m->ingress, true)) {
+                        printf("XCloud4: ingress stall detected (>500ms full without progress, cur_deq=%llu); recovering\n",
+                            (unsigned long long)cur_deq);
+                        x4_stream_pipeline_note_ingress_stall_recovery(m->stream);
+                        reset_au(m, true, RESET_INGRESS, 0);
+                        x4_live_reorder_reset(&m->reorder);
+                        m->sps_size = m->pps_size = 0;
+                        x4_keyframe_limiter_request(&m->keyframe_limiter, X4_KEYFRAME_ASSEMBLY);
+                        m->stall_tracking = false;
+                    } else {
+                        printf("XCloud4: ingress stall recovery deferred (quiesce wait timed out)\n");
+                    }
+                }
+            } else {
+                m->stall_tracking = false;
+            }
+        } else {
+            m->stall_tracking = false;
+        }
 #endif
         /* Independently evaluate absolute grace expiry on the existing
          * worker cadence, including empty ingress and no new reception. */
@@ -1969,7 +2023,7 @@ static void *video_worker(void *context)
              * With grace enabled retain its 1 ms service bound even before
              * an offer becomes active; the native wait still blocks. */
             int wait_rc=x4_stream_wait_block(&m->ingress_wait,ingress_wait_timeout(m));
-            if(wait_rc<0){rc=wait_rc;m->video.error=wait_rc;atomic_store(&m->stop,true);}
+            if(wait_rc<0){rc=wait_rc;set_video_error(m, wait_rc);atomic_store(&m->stop,true);}
         }
 #else
         if (!x4_video_ingress_depth(&m->ingress) && m->reorder.buffered) {
@@ -2075,6 +2129,14 @@ int x4_live_media_stream_present(X4LiveMedia *m,
     (void)m; (void)overlay; (void)context; return X4_LIVE_ERR_STATE;
 #endif
 }
+void x4_live_media_stream_note_menu_open(X4LiveMedia *m,bool open)
+{
+#if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
+    if(m)x4_stream_pipeline_note_menu_open(m->stream,open);
+#else
+    (void)m;(void)open;
+#endif
+}
 unsigned x4_live_media_stream_main_state(const X4LiveMedia *m)
 {
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
@@ -2102,7 +2164,10 @@ int x4_live_media_stream_wait(X4LiveMedia *m,unsigned timeout_us)
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
 int x4_live_media_stream_halt_video(X4LiveMedia *m)
 {
-    return m ? x4_stream_pipeline_halt_video(m->stream) : X4_LIVE_ERR_ARGUMENT;
+    if (!m) return X4_LIVE_ERR_ARGUMENT;
+    if (!m->video.error) set_video_error(m, X4_LIVE_ERR_DECODER);
+    (void)x4_video_ingress_quiesce_reset(&m->ingress, false);
+    return x4_stream_pipeline_halt_video(m->stream);
 }
 #endif
 X4StreamStartup *x4_live_media_stream_startup(X4LiveMedia *m)
@@ -2112,6 +2177,14 @@ X4StreamStartup *x4_live_media_stream_startup(X4LiveMedia *m)
 #else
     (void)m;return NULL;
 #endif
+}
+uint64_t x4_live_media_post_halt_video_packets(const X4LiveMedia *m)
+{
+    return m?atomic_load_explicit(&m->post_halt_video_packets,memory_order_relaxed):0;
+}
+uint64_t x4_live_media_first_post_halt_video_us(const X4LiveMedia *m)
+{
+    return m?atomic_load_explicit(&m->first_post_halt_video_us,memory_order_relaxed):0;
 }
 X4KeyframeLimiter *x4_live_media_keyframe_limiter(X4LiveMedia *m)
 {

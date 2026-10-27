@@ -9,9 +9,9 @@ common=(-std=c11 -O1 -g -Wall -Wextra -Werror -DX4_STREAM_PROFILE=1 -DX4_VIDEO_P
     src/ui/canvas.c src/ui/font.c src/ui/lang.c src/streaming/stream_profile.c src/video/stream_color_policy.c)
 quality_common=(-std=c11 -O1 -g -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L
     -DX4_STREAM_PROFILE=1 -DX4_VIDEO_PROBE=0 -Itests/host_stubs
-    tests/stream_settings_catalog_capture.c src/ui/catalog_gui.c src/ui/stream_settings.c
+    tests/stream_settings_catalog_capture.c src/ui/catalog_gui.c src/ui/apple_ui.c src/ui/net_hint.c src/ui/stream_settings.c
     src/ui/canvas.c src/ui/font.c src/ui/lang.c src/streaming/stream_profile.c src/ui/catalog_browser.c
-    src/ui/recent_games.c src/ui/product_metadata.c src/auth/json.c src/auth/public_image_policy.c -lm)
+    src/ui/recent_games.c src/ui/product_metadata.c src/auth/json.c src/auth/public_image_policy.c third_party/qrcodegen/qrcodegen.c -lm)
 "${CC:-clang}" "${common[@]}" ${X4_TEST_CFLAGS:-} -o "$build_dir/settings"
 "${CC:-clang}" "${quality_common[@]}" ${X4_TEST_CFLAGS:-} -o "$build_dir/quality"
 if [[ -n "${X4_TEST_RENDER_DIR:-}" ]]; then

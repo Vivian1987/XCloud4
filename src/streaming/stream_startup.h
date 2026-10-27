@@ -5,7 +5,7 @@
 #include <stdatomic.h>
 
 enum { X4_STREAM_INITIAL_RESOLUTION_TIMEOUT=-7433,
-    X4_STREAM_INITIAL_RESOLUTION_WAIT_US=10000000,
+    X4_STREAM_INITIAL_RESOLUTION_WAIT_US=30000000,
     X4_STREAM_INITIAL_RESOLUTION_RETRY_US=300000 };
 /* One object per pipeline/session, initialized before any producer starts.
  * The RTC callback publishes only the local alias-send result/timestamp.
@@ -14,15 +14,25 @@ enum { X4_STREAM_INITIAL_RESOLUTION_TIMEOUT=-7433,
  * The pipeline outlives the closed RTC callbacks and joined auth worker. */
 typedef struct X4StreamStartup {
     atomic_uint_fast64_t alias_sent_us;
+    atomic_uint_fast64_t last_alias_send_us;
+    atomic_uint_fast32_t alias_sends;
     atomic_int alias_rc;
-    atomic_bool alias_attempted,waiting;
+    atomic_bool alias_attempted,waiting,video_received;
+    uint8_t request_mode;
     bool enabled,admitted,cancelled,timed_out,elapsed_available;
     uint64_t first_admitted_us,alias_to_sps_us,dropped_aus,last_request_us;
+    uint32_t alias_retries;
     unsigned last_width,last_height;
 } X4StreamStartup;
 void x4_stream_startup_init(X4StreamStartup *,bool enabled);
+void x4_stream_startup_init_mode(X4StreamStartup *,bool enabled,uint8_t request_mode);
 void x4_stream_startup_note_alias(X4StreamStartup *,int result,uint64_t local_return_us);
+void x4_stream_startup_note_video_packet(X4StreamStartup *);
 uint64_t x4_stream_startup_alias_sent_us(const X4StreamStartup *);
+uint64_t x4_stream_startup_last_alias_send_us(const X4StreamStartup *);
+uint32_t x4_stream_startup_alias_sends(const X4StreamStartup *);
+uint32_t x4_stream_startup_alias_retries(const X4StreamStartup *);
+uint8_t x4_stream_startup_request_mode(const X4StreamStartup *);
 int x4_stream_startup_alias_result(const X4StreamStartup *,bool *attempted);
 bool x4_stream_startup_waiting(const X4StreamStartup *);
 /* Decode owner only. This clock is never reset by another oversized AU.

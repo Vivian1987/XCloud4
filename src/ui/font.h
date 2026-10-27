@@ -3,6 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define X4_FONT_REGULAR  0
+#define X4_FONT_SEMIBOLD 1
+#define X4_FONT_BOLD     2
+
 /* UI-thread-owned, fixed-budget precomputed alpha atlas. init accepts a file
  * or the containing directory. 0 = verified atlas loaded; -1 = smooth built-in
  * Regular fallback remains usable. close releases the optional heap atlas.

@@ -42,16 +42,16 @@ static void startup_timeout(void)
     X4StreamPipeline *p=begin_startup(202,X4_REQUEST_1080P_G,true);
     Fixture large=dimensions(2560,1440);large.level=51;
     assert(!submit_frame(p,&large,1,true));pump_dequeued(p,1);
-    advance_clock_and_wait_for_idle_poll(p,9999999);assert(!snapshot(p).error);
+    advance_clock_and_wait_for_idle_poll(p,X4_STREAM_INITIAL_RESOLUTION_WAIT_US-1);assert(!snapshot(p).error);
     advance_clock_and_wait_for_idle_poll(p,1);
     assert(snapshot(p).error==X4_STREAM_INITIAL_RESOLUTION_TIMEOUT&&!queries&&!creates&&!native_decodes);
     assert(snapshot(p).rejected_width==2560&&snapshot(p).rejected_height==1440);
     assert(!atomic_load(&external_stop)&&!x4_stream_startup_waiting(&p->startup));finish_case(p);
     p=begin_startup(203,X4_REQUEST_1080P_G,true);
-    advance_clock_and_wait_for_idle_poll(p,10000000);
+    advance_clock_and_wait_for_idle_poll(p,X4_STREAM_INITIAL_RESOLUTION_WAIT_US);
     assert(snapshot(p).error==X4_STREAM_INITIAL_RESOLUTION_TIMEOUT&&!queries&&!creates&&!native_decodes);
     assert(!atomic_load(&external_stop));finish_case(p);
-    puts("PASS real startup: exact ten-second timeout after local alias success, including no further AU, keeps audio/RTC cancellation false and retains observed dimensions");
+    puts("PASS real startup: configured resolution timeout after local alias success, including no further AU, keeps audio/RTC cancellation false and retains observed dimensions");
 }
 static void startup_before_alias(void)
 {
@@ -65,7 +65,7 @@ static void startup_before_alias(void)
     advance_clock_and_wait_for_idle_poll(p,3000000);
     Fixture supported=dimensions(1920,1088);assert(!submit_frame(p,&supported,2,true));pump_outputs(p,1);
     assert(p->startup.alias_to_sps_us==3000000&&queries==1);finish_case(p);
-    puts("PASS real startup: no deadline or keyframe is invented before the alias send; its later success starts the full ten-second window");
+    puts("PASS real startup: no deadline or keyframe is invented before the alias send; its later success starts the full configured window");
 }
 static void startup_default720_and_cancel(void)
 {
@@ -129,7 +129,7 @@ static void startup_supported_before_alias_and_malformed(void)
     advance_clock_and_wait_for_idle_poll(p,5000000);
     assert(snapshot(p).error==X4_STREAM_IDR_WAIT_TIMEOUT&&!queries&&!creates&&!native_decodes);
     finish_case(p);
-    puts("PASS supported SPS before alias starts without invented timing; malformed SPS keeps its existing five-second IDR recovery, never the oversized ten-second exception");
+    puts("PASS supported SPS before alias starts without invented timing; malformed SPS keeps its existing five-second IDR recovery, never the oversized-resolution waiting exception");
 }
 int main(int argc,char **argv)
 {

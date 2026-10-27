@@ -13,6 +13,7 @@ typedef struct {
     bool open;
     bool applied;
     unsigned char interaction_modes;
+    unsigned char convert_sharp; /* bit 0: convert_mode (1 = Suave), bits 1..2: sharpness, bits 3..4: req_mode */
     unsigned row;
     X4StreamRequestProfile profile;
     X4StreamColorPreference color;

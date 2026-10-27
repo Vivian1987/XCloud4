@@ -53,6 +53,8 @@ size_t x4_video_ingress_pop_ticket(X4VideoIngress *q, uint8_t *out,
 uint32_t x4_video_ingress_depth(const X4VideoIngress *q);
 uint64_t x4_video_ingress_oldest(const X4VideoIngress *q);
 void x4_video_ingress_stop(X4VideoIngress *q);
+void x4_video_ingress_reset(X4VideoIngress *q);
+bool x4_video_ingress_quiesce_reset(X4VideoIngress *q, bool resume_accepting);
 /* Stop, join all producers AND the sole consumer, then free. An active-op
  * check retains memory on a violated precondition; it does not authorize
  * racing free with new callers. In-flight reservations may finish at stop. */

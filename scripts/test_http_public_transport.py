@@ -16,12 +16,13 @@ with tempfile.TemporaryDirectory(prefix="x4-public-http-") as directory:
     path = Path(directory)
     (path / "orbis").mkdir()
     (path / "orbis/libkernel.h").write_text(
-        "#include <stdint.h>\nuint64_t sceKernelGetProcessTime(void);\n", encoding="utf8")
+        "#include <stdint.h>\nuint64_t sceKernelGetProcessTime(void);\nint sceKernelUsleep(unsigned int microseconds);\n", encoding="utf8")
     compiler = shlex.split(os.environ.get("CC", "cc"))
     flags = shlex.split(os.environ.get("CFLAGS", ""))
     binary = path / "public-http-test"
     subprocess.run(compiler + ["-std=gnu2x", "-Wall", "-Wextra", "-Werror", *flags,
         "-I", str(path), str(root / "tests/http_public_transport_test.c"),
-        str(root / "src/auth/public_image_policy.c"), "-o", str(binary)], check=True)
+        str(root / "src/auth/public_image_policy.c"),
+        str(root / "src/auth/ca_bundle.c"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
 print("production HTTP source SHA256:", hashlib.sha256((root / "src/auth/http_client.c").read_bytes()).hexdigest())

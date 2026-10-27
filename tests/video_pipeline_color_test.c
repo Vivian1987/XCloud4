@@ -84,7 +84,7 @@ static void conversion_case(X4VideoNv12Layout l, unsigned matrix, bool full,
     assert(src_raw && out_raw && ref);
     memset(src_raw,0x5a,l.total_nv12_bytes+64); fill_source(src,l.total_nv12_bytes);
     for (size_t i=0;i<out_pixels+guard_count*2;++i) out_raw[i]=guard;
-    X4VideoPipelineColor color={matrix,full};
+    X4VideoPipelineColor color={matrix,full,0,0};
     unsigned path=UINT_MAX;
     assert(x4_video_pipeline_color_path(&l,l.total_nv12_bytes,&path)==0);
 #if defined(__SSE2__) && !defined(X4_PIPELINE_SCALAR)
@@ -138,7 +138,7 @@ static void conversion_case(X4VideoNv12Layout l, unsigned matrix, bool full,
 static void invalid_cases(void)
 {
     X4VideoNv12Layout l=layout(1280,720,1280,720,1280,0,0), bad;
-    X4VideoPipelineColor color={1,false}; unsigned path=UINT_MAX;
+    X4VideoPipelineColor color={1,false,0,0}; unsigned path=UINT_MAX;
     size_t out_bytes=(size_t)1920*1080*4;
     uint8_t *src=calloc(1,l.total_nv12_bytes);
     uint32_t *dst=malloc(out_bytes);

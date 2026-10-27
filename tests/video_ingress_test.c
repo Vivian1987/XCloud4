@@ -379,7 +379,12 @@ static void *stress_producer(void *context)
             }
             CHECK(result.reason == X4_INGRESS_FULL || result.reason == X4_INGRESS_CONTENDED);
             atomic_fetch_add(result.reason == X4_INGRESS_FULL ? &s->full_retries : &s->contention_retries, 1);
-            CHECK(sched_yield() == 0);
+            if (n > 1000) {
+                struct timespec d = { .tv_sec = 0, .tv_nsec = 50000 };
+                nanosleep(&d, NULL);
+            } else {
+                CHECK(sched_yield() == 0);
+            }
         }
         CHECK(accepted);
     }
@@ -455,6 +460,176 @@ static void numeric_ticket_roundtrip(void)
     CHECK(x4_video_ingress_pop_ticket(&q,out,&arrival,&received)==0 && !received.identity);
     dispose(&q); puts("PASS numeric NACK ticket publication and clearing; queue algorithm unchanged");
 }
+
+static void reset_and_recovery(void)
+{
+    X4VideoIngress q;
+    CHECK(x4_video_ingress_init(&q, CAPACITY) == 0);
+    X4IngressResult r;
+    uint8_t pkt[64] = {0};
+    for (uint32_t i = 0; i < CAPACITY; ++i) {
+        CHECK(x4_video_ingress_push(&q, pkt, sizeof(pkt), 1000 + i, &r));
+        CHECK(r.reason == X4_INGRESS_OK);
+    }
+    CHECK(x4_video_ingress_depth(&q) == CAPACITY);
+    CHECK(!x4_video_ingress_push(&q, pkt, sizeof(pkt), 2000, &r));
+    CHECK(r.reason == X4_INGRESS_FULL);
+
+    x4_video_ingress_reset(&q);
+    CHECK(x4_video_ingress_depth(&q) == 0);
+
+    pkt[0] = 0x42;
+    CHECK(x4_video_ingress_push(&q, pkt, sizeof(pkt), 3000, &r));
+    CHECK(r.reason == X4_INGRESS_OK);
+    CHECK(x4_video_ingress_depth(&q) == 1);
+
+    uint8_t out[64] = {0};
+    uint64_t arr = 0;
+    X4IngressTicket t = {0};
+    CHECK(x4_video_ingress_pop_ticket(&q, out, &arr, &t) == sizeof(pkt));
+    CHECK(out[0] == 0x42);
+    CHECK(arr == 3000);
+    CHECK(x4_video_ingress_depth(&q) == 0);
+
+    x4_video_ingress_stop(&q);
+    CHECK(!x4_video_ingress_push(&q, pkt, sizeof(pkt), 4000, &r));
+    CHECK(r.reason == X4_INGRESS_STOPPED);
+
+    dispose(&q);
+    puts("PASS video ingress reset and stall recovery");
+}
+
+typedef struct {
+    X4VideoIngress queue;
+    StartGate start;
+    atomic_uint producers_finished;
+    atomic_uint resets_completed;
+    atomic_uint packets_consumed;
+    atomic_bool stop_reset;
+} QuiesceStress;
+
+typedef struct {
+    QuiesceStress *stress;
+    unsigned producer;
+} QuiesceProducer;
+
+static void *quiesce_producer_thread(void *context)
+{
+    QuiesceProducer *p = context;
+    QuiesceStress *s = p->stress;
+    start_together(&s->start);
+    for (unsigned seq = 0; seq < PER_PRODUCER; ++seq) {
+        bool accepted = false;
+        for (unsigned n = 0; n < MAX_PACKET_RETRIES; ++n) {
+            X4IngressResult result;
+            if (push_packet(&s->queue, p->producer, seq, 64, &result)) {
+                CHECK(result.reason == X4_INGRESS_OK);
+                accepted = true;
+                break;
+            }
+            CHECK(result.reason == X4_INGRESS_FULL ||
+                  result.reason == X4_INGRESS_CONTENDED ||
+                  result.reason == X4_INGRESS_STOPPED);
+            if (n > 1000) {
+                struct timespec d = { .tv_sec = 0, .tv_nsec = 50000 };
+                nanosleep(&d, NULL);
+            } else {
+                CHECK(sched_yield() == 0);
+            }
+        }
+        CHECK(accepted);
+    }
+    atomic_fetch_add_explicit(&s->producers_finished, 1, memory_order_release);
+    return NULL;
+}
+
+static void *quiesce_reset_thread(void *context)
+{
+    QuiesceStress *s = context;
+    start_together(&s->start);
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 300000 };
+    while (!atomic_load_explicit(&s->stop_reset, memory_order_acquire)) {
+        nanosleep(&ts, NULL);
+        if (x4_video_ingress_quiesce_reset(&s->queue, true)) {
+            atomic_fetch_add_explicit(&s->resets_completed, 1, memory_order_relaxed);
+        }
+    }
+    return NULL;
+}
+
+static void *quiesce_consumer_thread(void *context)
+{
+    QuiesceStress *s = context;
+    start_together(&s->start);
+    int64_t last_seen[PRODUCERS];
+    for (unsigned i = 0; i < PRODUCERS; ++i) last_seen[i] = -1;
+    uint8_t out[X4_INGRESS_PACKET_MAX];
+
+    while (atomic_load_explicit(&s->producers_finished, memory_order_acquire) < PRODUCERS ||
+           x4_video_ingress_depth(&s->queue) > 0) {
+        uint64_t arrival = 0;
+        size_t size = x4_video_ingress_pop(&s->queue, out, &arrival);
+        if (!size) {
+            CHECK(sched_yield() == 0);
+            continue;
+        }
+        CHECK(size >= 12);
+        uint32_t producer, sequence;
+        memcpy(&producer, out + 4, 4);
+        memcpy(&sequence, out + 8, 4);
+        CHECK(producer < PRODUCERS);
+        CHECK((int64_t)sequence > last_seen[producer]);
+        last_seen[producer] = (int64_t)sequence;
+        verify(out, size, producer, sequence);
+        CHECK(arrival == packet_arrival(producer, sequence));
+        atomic_fetch_add_explicit(&s->packets_consumed, 1, memory_order_relaxed);
+    }
+    return NULL;
+}
+
+static void test_quiesce_reset_concurrent(void)
+{
+    QuiesceStress s = {
+        .start = { .mutex = PTHREAD_MUTEX_INITIALIZER,
+                   .condition = PTHREAD_COND_INITIALIZER,
+                   .needed = PRODUCERS + 3 }
+    };
+    atomic_init(&s.producers_finished, 0);
+    atomic_init(&s.resets_completed, 0);
+    atomic_init(&s.packets_consumed, 0);
+    atomic_init(&s.stop_reset, false);
+    CHECK(x4_video_ingress_init(&s.queue, CAPACITY) == 0);
+
+    pthread_t prod_threads[PRODUCERS], reset_th, cons_th;
+    QuiesceProducer producers[PRODUCERS];
+    for (unsigned i = 0; i < PRODUCERS; ++i) {
+        producers[i] = (QuiesceProducer){ .stress = &s, .producer = i };
+        CHECK(pthread_create(&prod_threads[i], NULL, quiesce_producer_thread, &producers[i]) == 0);
+    }
+    CHECK(pthread_create(&reset_th, NULL, quiesce_reset_thread, &s) == 0);
+    CHECK(pthread_create(&cons_th, NULL, quiesce_consumer_thread, &s) == 0);
+
+    start_together(&s.start);
+
+    for (unsigned i = 0; i < PRODUCERS; ++i) {
+        CHECK(pthread_join(prod_threads[i], NULL) == 0);
+    }
+    CHECK(pthread_join(cons_th, NULL) == 0);
+    atomic_store_explicit(&s.stop_reset, true, memory_order_release);
+    CHECK(pthread_join(reset_th, NULL) == 0);
+
+    unsigned resets = atomic_load(&s.resets_completed);
+    unsigned consumed = atomic_load(&s.packets_consumed);
+    CHECK(resets > 0);
+    CHECK(consumed > 0);
+    printf("PASS quiesce_reset concurrent: resets=%u, consumed=%u, no duplicates or pre-reset packets\n",
+           resets, consumed);
+
+    dispose(&s.queue);
+    CHECK(pthread_cond_destroy(&s.start.condition) == 0);
+    CHECK(pthread_mutex_destroy(&s.start.mutex) == 0);
+}
+
 int main(void)
 {
     CHECK(signal(SIGALRM,alarm_expired)!=SIG_ERR); alarm(30);
@@ -463,12 +638,13 @@ int main(void)
 #else
     puts("MODE candidate MPSC (no consumer gate on push)");
 #endif
-    numeric_ticket_roundtrip(); invalid_and_full(); consume_overlap_with_space();
+    numeric_ticket_roundtrip(); reset_and_recovery(); invalid_and_full(); consume_overlap_with_space();
 #ifndef X4_INGRESS_BASELINE
     unpublished_cannot_be_bypassed();
 #endif
     held_slot_is_not_overwritten(); stop_during_activity(); wrap_and_bounded_exhaustion();
     concurrent_producers();
+    test_quiesce_reset_concurrent();
     CHECK(pthread_cond_destroy(&gate.condition)==0); CHECK(pthread_mutex_destroy(&gate.mutex)==0);
     alarm(0); puts("PASS video ingress host harness; no console/app execution"); return 0;
 }

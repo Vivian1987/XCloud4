@@ -46,3 +46,5 @@ int x4_stream_diagnostics_write(FILE *, const X4StreamDiagnostics *, uint64_t en
 uint64_t x4_stream_diagnostics_presentations(const X4StreamDiagnostics *);
 uint64_t x4_stream_diagnostics_first_present(const X4StreamDiagnostics *);
 size_t x4_stream_diagnostics_storage_bytes(void);
+bool x4_stream_diagnostics_stage_percentile(const X4StreamDiagnostics *, X4StreamStage,
+    unsigned p, uint64_t *out_us, uint64_t *out_max_us);

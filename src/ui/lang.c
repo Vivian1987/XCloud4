@@ -26,7 +26,7 @@ enum {
 static enum X4Lang current_lang = X4_LANG_ES;
 static char current_locale[16] = "es-MX";
 static char current_market[8] = "MX";
-static char current_store_suffix[64] = "&market=MX&languages=es-MX&fieldsTemplate=Details";
+static char current_store_suffix[128] = "&market=MX&languages=es-MX&fieldsTemplate=Details";
 
 void x4_lang_set(enum X4Lang lang, const char *locale, const char *market)
 {
@@ -128,17 +128,17 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_CARD_ACCOUNT_DESC] = "INICIA SESION CON\nMICROSOFT Y JUEGA.",
     [X4_TR_CARD_ABOUT_TITLE] = "ACERCA DE",
     [X4_TR_CARD_ABOUT_DESC] = "INFORMACION, CREDITOS\nY CONTROLES.",
-    [X4_TR_CARD_SUPPORT_TITLE] = "APOYA EL PROYECTO",
+    [X4_TR_CARD_SUPPORT_TITLE] = "APOYA EL\nPROYECTO",
     [X4_TR_CARD_SUPPORT_DESC] = "DONACION VOLUNTARIA\nPARA EL DESARROLLO.",
     [X4_TR_X_OPEN] = "X  ABRIR",
     [X4_TR_HOME_HINT] = "ABRE CUENTA PARA CONECTAR Y CONSULTAR EL CATALOGO.",
-    [X4_TR_HOME_FOOTER_PUBLIC] = "CRUCETA  ELEGIR     X  ABRIR     PARA SALIR: BOTON PS > CERRAR APLICACION",
-    [X4_TR_HOME_FOOTER_LAB] = "CRUCETA  ELEGIR     X  ABRIR     OPTIONS  SALIR",
+    [X4_TR_HOME_FOOTER_PUBLIC] = "CRUCETA  ELEGIR     X  ABRIR     OPTIONS  AJUSTES     PARA SALIR: BOTON PS > CERRAR APLICACION",
+    [X4_TR_HOME_FOOTER_LAB] = "CRUCETA  ELEGIR     X  ABRIR     OPTIONS  AJUSTES     PARA SALIR: BOTON PS > CERRAR APLICACION",
 
     [X4_TR_ABOUT_TITLE] = "ACERCA DE",
     [X4_TR_ABOUT_LINE1] = "XCLOUD4 " X4_PRODUCT_VERSION " - CLIENTE NO OFICIAL DE XBOX CLOUD GAMING PARA PS4",
-    [X4_TR_ABOUT_LINE2] = "REQUIERE XBOX GAME PASS CON JUEGO EN LA NUBE Y BUENA CONEXION A INTERNET.",
-    [X4_TR_ABOUT_LINE3] = "NO ESTA AFILIADO CON MICROSOFT, XBOX NI SONY.",
+    [X4_TR_ABOUT_LINE2] = "REQUIERE GAME PASS CON JUEGO EN LA NUBE, O UNA CUENTA GRATIS CON PERFIL DE XBOX PARA JUEGOS GRATUITOS COMO FORTNITE.",
+    [X4_TR_ABOUT_LINE3] = "Proyecto independiente, sin afiliación con Microsoft, Xbox ni Sony. Úsalo bajo tu propia responsabilidad.",
     [X4_TR_ABOUT_LINE4] = "SOFTWARE LIBRE GPL-3.0 - GITHUB.COM/ASP11EDGR/XCLOUD4",
     [X4_TR_ABOUT_LINE5] = "DESARROLLADO POR ASAP_EDGR",
     [X4_TR_ABOUT_LINE6] = "CREDITOS: OPENORBIS, GOLDHEN, LIBDATACHANNEL, OPUS, MBED TLS. REFERENCIAS: GREENVITA Y PSBOX.",
@@ -154,7 +154,7 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_SUPPORT_LINE5] = "GRACIAS POR TU APOYO.",
 
     [X4_TR_EXIT_ERR_PUBLIC_FMT] = "NO SE PUDO SALIR: 0X%08X. PARA SALIR: BOTON PS > CERRAR APLICACION.",
-    [X4_TR_EXIT_ERR_LAB_FMT] = "NO SE PUDO SALIR: 0X%08X. OPTIONS PARA REINTENTAR.",
+    [X4_TR_EXIT_ERR_LAB_FMT] = "NO SE PUDO SALIR: 0X%08X. BOTON PS > CERRAR APLICACION.",
 
     [X4_TR_AUTH_TITLE] = "TU CUENTA MICROSOFT",
     [X4_TR_AUTH_PROMPT_PUBLIC] = "INICIA SESION CON TU CUENTA DE MICROSOFT DESDE TU TELEFONO O PC.",
@@ -176,8 +176,8 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_AUTH_IDLE_HINT_PUBLIC] = "X SOLICITA UN CODIGO PARA INICIAR SESION.\nTU CONTRASENA SE INTRODUCE EN LA PAGINA DE MICROSOFT.",
     [X4_TR_AUTH_IDLE_HINT_LAB] = "X SOLICITA UN CODIGO. CUADRADO REVISA LA CONEXION.\nTU CONTRASENA SE INTRODUCE EN LA PAGINA DE MICROSOFT.",
     [X4_TR_DETAIL_HTTP_FMT] = "DETALLE 0X%08X    HTTP %d",
-    [X4_TR_AUTH_FOOTER_PUBLIC] = "X INICIAR SESION   TRIANGULO CERRAR SESION   CIRCULO VOLVER   R1 CATALOGO",
-    [X4_TR_AUTH_FOOTER_LAB] = "X INICIAR   CUADRADO CONEXION   TRIANGULO BORRAR SESION   CIRCULO VOLVER   OPTIONS SALIR",
+    [X4_TR_AUTH_FOOTER_PUBLIC] = "X INICIAR SESION   TRIANGULO CERRAR SESION   OPTIONS AJUSTES   CIRCULO VOLVER   R1 CATALOGO",
+    [X4_TR_AUTH_FOOTER_LAB] = "X INICIAR   CUADRADO CONEXION   TRIANGULO BORRAR SESION   OPTIONS AJUSTES   CIRCULO VOLVER",
     [X4_TR_AUTH_R1_HINT] = "R1 CATALOGO DE XBOX. ELIGE UN TITULO CON ACCESO PARA JUGAR.",
 
     [X4_TR_SESS_TITLE] = "SESION DE JUEGO",
@@ -206,12 +206,12 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_SESS_CLEANUP_FAIL_FMT] = "CIERRE SIN CONFIRMAR: 0X%08X   HTTP %d",
     [X4_TR_SESS_DETAIL_FMT] = "DETALLE 0X%08X   HTTP %d",
     [X4_TR_SESS_FOOTER_PUBLIC] = "CIRCULO  CERRAR Y VOLVER AL CATALOGO     PARA SALIR: BOTON PS > CERRAR APLICACION",
-    [X4_TR_SESS_FOOTER_LAB] = "CIRCULO  CERRAR Y VOLVER AL CATALOGO     OPTIONS  SALIR",
+    [X4_TR_SESS_FOOTER_LAB] = "CIRCULO  CERRAR Y VOLVER AL CATALOGO     PARA SALIR: BOTON PS > CERRAR APLICACION",
     [X4_TR_GAME_TOUCH_HINT] = "EN EL JUEGO: MANTÉN DOS DEDOS EN EL TOUCHPAD 1 S PARA ABRIR EL MENÚ",
 
     [X4_TR_LIVE_PACKETS_FMT] = "H264: %llu PAQUETES, %llu IMAGENES   OPUS: %llu PAQUETES, %llu BLOQUES",
     [X4_TR_LIVE_VIDEO_ERR_PUBLIC_FMT] = "Código %d · audio %s · PARA SALIR: BOTON PS > CERRAR APLICACION",
-    [X4_TR_LIVE_VIDEO_ERR_LAB_FMT] = "Código %d · audio %s · OPTIONS para salir",
+    [X4_TR_LIVE_VIDEO_ERR_LAB_FMT] = "Código %d · audio %s · PARA SALIR: BOTON PS > CERRAR APLICACION",
     [X4_TR_LIVE_AUDIO_UNAVAIL] = "no disponible",
     [X4_TR_LIVE_AUDIO_ACTIVE] = "activo",
     [X4_TR_LIVE_AUDIO_WAITING] = "en espera",
@@ -232,6 +232,8 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_VIDEO_REJECTED_DIM_LAB_FMT] = "Xbox envió %u×%u; esta PS4 solo admite hasta 1080p. Sal con OPTIONS.",
     [X4_TR_VIDEO_STOPPED_PUBLIC_FMT] = "Vídeo detenido (código %d). Cierra con botón PS.",
     [X4_TR_VIDEO_STOPPED_LAB_FMT] = "Vídeo detenido (código %d). Sal con OPTIONS.",
+    [X4_TR_VIDEO_NO_FRAMES] = "Xbox no envió imagen. Puede ser un problema temporal de Xbox con este juego: vuelve a intentarlo o prueba otro servidor en OPTIONS.",
+    [X4_TR_CANCEL_HINT] = "CÍRCULO Cancelar",
 
     [X4_TR_CAT_DS4_CONNECTED] = "DualShock 4 conectado",
     [X4_TR_CAT_DS4_CONNECT] = "Conecta tu DualShock 4",
@@ -257,15 +259,15 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_CAT_QUERYING] = "Consultando xCloud…",
     [X4_TR_CAT_PLAY_BTN] = "X  Jugar",
     [X4_TR_CAT_CHOOSE_GAME] = "Elige un juego",
-    [X4_TR_CAT_FOOTER_PUBLIC] = "Cruceta Elegir   X Jugar   L1/R1 Página   L2/R2 Grupos   CUADRADO Actualizar   CÍRCULO Cuenta",
-    [X4_TR_CAT_FOOTER_LAB] = "Cruceta Elegir   X Jugar   L1/R1 Página   L2/R2 Grupos   CUADRADO Actualizar   CÍRCULO Cuenta   OPTIONS Salir",
+    [X4_TR_CAT_FOOTER_PUBLIC] = "Cruceta Elegir   X Jugar   OPTIONS Ajustes   L1/R1 Página   L2/R2 Grupos   CUADRADO Actualizar   CÍRCULO Cuenta",
+    [X4_TR_CAT_FOOTER_LAB] = "Cruceta Elegir   X Jugar   OPTIONS Ajustes   L1/R1 Página   L2/R2 Grupos   CUADRADO Actualizar   CÍRCULO Cuenta",
     [X4_TR_CAT_FINISHING_COVERS] = "Terminando la carga de portadas…",
     [X4_TR_CAT_RESULTS_FMT] = "%u resultados · Página %u/%u · %s",
     [X4_TR_KB_TITLE] = "Buscar juegos",
     [X4_TR_KB_PLACEHOLDER] = "Escribe un título o ID",
     [X4_TR_KB_HELP1] = "X Añadir   CUADRADO Borrar   TRIÁNGULO Limpiar",
     [X4_TR_KB_HELP2_PUBLIC] = "R1 Espacio   R2 Aplicar   CÍRCULO Volver",
-    [X4_TR_KB_HELP2_LAB] = "R1 Espacio   R2 Aplicar   CÍRCULO Volver   OPTIONS Salir",
+    [X4_TR_KB_HELP2_LAB] = "R1 Espacio   R2 Aplicar   CÍRCULO Volver",
     [X4_TR_ASSET_DOWNLOADING] = "Descargando…",
     [X4_TR_ASSET_READY] = "Lista",
     [X4_TR_ASSET_RETRY_PENDING] = "Reintento pendiente",
@@ -281,6 +283,97 @@ static const char *const table_es[X4_TR_COUNT] = {
     [X4_TR_UPDATE_AVAILABLE_FMT] = "HAY UNA VERSION NUEVA: %s",
     [X4_TR_UPDATE_FAILED] = "NO SE PUDO COMPROBAR SI HAY ACTUALIZACIONES",
     [X4_TR_AUTH_SCAN_PHONE] = "ESCANEA CON TU TELEFONO",
+
+    [X4_TR_XSTS_NO_PROFILE] = "Tu cuenta aún no tiene perfil de Xbox. Entra una vez en xbox.com con esta cuenta para crearlo y vuelve a iniciar sesión.",
+    [X4_TR_XSTS_UNAVAILABLE_COUNTRY] = "Xbox Live no está disponible en el país de tu cuenta.",
+    [X4_TR_XSTS_AGE_VERIFICATION] = "Tu cuenta necesita verificación de edad en xbox.com.",
+    [X4_TR_XSTS_CHILD_ACCOUNT] = "Esta cuenta es de un menor: un adulto de la familia Microsoft debe darle permiso.",
+    [X4_TR_DETAIL_XBOX_HTTP_FMT] = "DETALLE XBOX %u    HTTP %d",
+
+    [X4_TR_NET_HINT_DNS] = "La consola no puede resolver direcciones de internet (DNS). Revisa Ajustes > Red y usa un DNS manual que funcione, por ejemplo 1.1.1.1 / 8.8.8.8.",
+    [X4_TR_NET_HINT_TIMEOUT] = "La conexión tardó demasiado. Revisa tu internet y vuelve a intentarlo.",
+    [X4_TR_NET_HINT_SSL_CERT] = "La consola no reconoce el certificado del servidor. Actualiza XCloud4 a la última versión.",
+
+    [X4_TR_PIC_SETTINGS_TITLE] = "Ajustes de imagen",
+    [X4_TR_PIC_SETTINGS_SUBTITLE] = "Se guardan en la consola y se aplican al iniciar el siguiente juego.",
+    [X4_TR_PIC_SETTINGS_SECTION] = "Calidad de imagen",
+    [X4_TR_PIC_SETTINGS_OPT_1080P_ALTA] = "1080p Alta (recomendada)",
+    [X4_TR_PIC_SETTINGS_OPT_1080P] = "1080p",
+    [X4_TR_PIC_SETTINGS_OPT_720P] = "720p",
+    [X4_TR_PIC_SETTINGS_TAG_1080P_ALTA] = "~10-13 Mbps",
+    [X4_TR_PIC_SETTINGS_TAG_1080P] = "~5-8 Mbps",
+    [X4_TR_PIC_SETTINGS_TAG_720P] = "~7 Mbps",
+    [X4_TR_PIC_SETTINGS_DESC_1080P_ALTA] = "1920x1080 a 60 fps, unos 10-13 Mbps. La mejor nitidez. Necesita una conexión estable de 15 Mbps o más (mejor por cable). Es la opción recomendada.",
+    [X4_TR_PIC_SETTINGS_DESC_1080P] = "1920x1080 a 60 fps, hasta 8 Mbps. Usa menos internet a cambio de algo más de compresión. Buena si notas cortes con la opción Alta.",
+    [X4_TR_PIC_SETTINGS_DESC_720P] = "1280x720 a 60 fps, unos 7 Mbps. Menos retraso, porque la consola decodifica cada imagen más rápido, pero la imagen se ve menos nítida.",
+    [X4_TR_PIC_SETTINGS_FOOTER] = "ARRIBA/ABAJO Elegir     X Guardar     CÍRCULO Cancelar",
+    [X4_TR_PIC_SETTINGS_BANNER_1080P_ALTA] = "1080p · Alta",
+    [X4_TR_PIC_SETTINGS_BANNER_1080P] = "1080p",
+    [X4_TR_PIC_SETTINGS_BANNER_720P] = "720p",
+
+    [X4_TR_OPTIONS_TAB_PICTURE] = "Imagen",
+    [X4_TR_OPTIONS_TAB_SERVER] = "Servidor",
+    [X4_TR_OPTIONS_FOOTER] = "L1/R1 Pestaña     ARRIBA/ABAJO Elegir     X Guardar     CÍRCULO Cancelar",
+    [X4_TR_SERVER_SETTINGS_SUBTITLE] = "Los ms se miden en tu última partida en cada servidor. Se aplica al cargar el catálogo y al iniciar el siguiente juego.",
+    [X4_TR_SERVER_OPT_AUTO] = "Automático (recomendado)",
+    [X4_TR_SERVER_TAG_AUTO_FMT] = "Xbox elige: %s",
+    [X4_TR_SERVER_LAST_GAME] = "última partida",
+    [X4_TR_SERVER_NOT_MEASURED] = "sin medir",
+    [X4_TR_SERVER_MEASURING] = "midiendo…",
+    [X4_TR_SERVER_NO_RESPONSE] = "sin respuesta",
+    [X4_TR_SERVER_NO_LIST] = "Inicia sesión para ver los servidores que Xbox ofrece a tu cuenta.",
+    [X4_TR_SERVER_NOT_AVAILABLE] = "Tu servidor elegido ya no está disponible; se usa Automático.",
+    [X4_TR_SERVER_FIRST_TITLE] = "Elige tu servidor",
+    [X4_TR_SERVER_FIRST_SUBTITLE] = "Elige el que tenga menos ms. Puedes cambiarlo cuando quieras en OPTIONS.",
+    [X4_TR_ACCOUNT_HINT_FIRST_SERVER] = "AL INICIAR SESION PODRAS ELEGIR TU SERVIDOR.",
+    [X4_TR_CAT_CHOOSE_SERVER_WAIT] = "Elige tu servidor para continuar",
+
+    [X4_TR_CARD_FORTNITE_TITLE] = "FORTNITE",
+    [X4_TR_CARD_FORTNITE_DESC] = "¿SIN GAME PASS?\nJUEGA FORTNITE GRATIS\nCON TU CUENTA\nDE MICROSOFT.",
+    [X4_TR_X_PLAY] = "X  JUGAR",
+    [X4_TR_FORTNITE_TITLE] = "FORTNITE",
+    [X4_TR_FORTNITE_PIC_QUALITY] = "CALIDAD DE IMAGEN",
+    [X4_TR_FORTNITE_HINT] = "Si notas cortes o tu internet es lento, elige 1080p o 720p.",
+    [X4_TR_FORTNITE_FOOTER] = "ARRIBA/ABAJO CALIDAD     X JUGAR     OPTIONS SERVIDOR     CIRCULO VOLVER",
+    [X4_TR_FORTNITE_UNAVAILABLE] = "Fortnite no está disponible para tu cuenta en este servidor. Prueba otro servidor en OPTIONS.",
+    [X4_TR_FORTNITE_SEARCHING] = "Buscando Fortnite en el servidor…",
+    [X4_TR_FORTNITE_ERROR_FOOTER] = "OPTIONS SERVIDOR     CIRCULO VOLVER",
+    [X4_TR_CLOUD_UNAVAILABLE_FMT] = "Xbox Cloud Gaming no está disponible para tu ubicación o tu cuenta (HTTP %d). XCloud4 solo puede usar los servidores que Xbox te ofrece.",
+
+    [X4_TR_APPLE_YOUR_ACCOUNT] = "Tu cuenta",
+    [X4_TR_APPLE_HOME_TITLE] = "Tu próxima partida.",
+    [X4_TR_APPLE_HOME_SUBTITLE] = "Elige cómo quieres jugar.",
+    [X4_TR_APPLE_CARD_EXPLORE_TITLE] = "Explorar catálogo",
+    [X4_TR_APPLE_CARD_EXPLORE_SUB] = "Encuentra tu próxima aventura",
+    [X4_TR_APPLE_BTN_ENTER] = "Entrar",
+    [X4_TR_APPLE_CARD_FORTNITE_TITLE] = "Fortnite",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB] = "Acceso directo",
+    [X4_TR_APPLE_CARD_ACCOUNT_TITLE] = "Cuenta",
+    [X4_TR_APPLE_CARD_ACCOUNT_SUB_OUT] = "Inicia sesión",
+    [X4_TR_APPLE_CARD_ACCOUNT_SUB_IN] = "Sesión activa",
+    [X4_TR_APPLE_PILL_SETTINGS] = "Ajustes",
+    [X4_TR_APPLE_PILL_ABOUT] = "Acerca de",
+    [X4_TR_APPLE_PILL_SUPPORT] = "Apoyar",
+    [X4_TR_APPLE_HINT_SELECT] = "Seleccionar",
+    [X4_TR_APPLE_HINT_SETTINGS] = "Ajustes",
+    [X4_TR_APPLE_HINT_SEARCH] = "Buscar",
+    [X4_TR_APPLE_HINT_BACK] = "Volver",
+    [X4_TR_APPLE_HINT_SERVER_FIRST] = "Al iniciar sesión podrás elegir tu servidor",
+    [X4_TR_APPLE_TAB_DISCOVER] = "Descubrir",
+    [X4_TR_APPLE_TAB_CATALOG] = "Catálogo",
+    [X4_TR_APPLE_TAB_RECENTS] = "Recientes",
+    [X4_TR_APPLE_TAB_FORTNITE] = "Fortnite",
+    [X4_TR_APPLE_HERO_FEATURED] = "DESTACADO",
+    [X4_TR_APPLE_HERO_PLAY_NOW] = "Jugar ahora",
+    [X4_TR_APPLE_HERO_DEFAULT_SUB] = "Juega al instante en la nube desde tu consola PS4.",
+    [X4_TR_APPLE_ROW_CONTINUE] = "Continúa donde lo dejaste",
+    [X4_TR_APPLE_ROW_POPULAR] = "Populares",
+    [X4_TR_APPLE_PS_EXIT_HINT] = "Botón PS: Salir",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB1] = "¿Sin Game Pass? Juega gratis",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB2] = "con tu cuenta de Microsoft.",
+    [X4_TR_APPLE_BADGE_FREE] = "Gratis",
+    [X4_TR_FORTNITE_REQ_LINE] = "Requiere una cuenta de Microsoft con perfil de Xbox. No necesitas Game Pass.",
+    [X4_TR_APPLE_HINT_RIGHT_STICK_READ_MORE] = "Stick derecho: leer más",
 };
 
 static const char *const table_en[X4_TR_COUNT] = {
@@ -295,17 +388,17 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_CARD_ACCOUNT_DESC] = "SIGN IN WITH\nMICROSOFT AND PLAY.",
     [X4_TR_CARD_ABOUT_TITLE] = "ABOUT",
     [X4_TR_CARD_ABOUT_DESC] = "INFORMATION, CREDITS\nAND CONTROLS.",
-    [X4_TR_CARD_SUPPORT_TITLE] = "SUPPORT THE PROJECT",
+    [X4_TR_CARD_SUPPORT_TITLE] = "SUPPORT THE\nPROJECT",
     [X4_TR_CARD_SUPPORT_DESC] = "VOLUNTARY DONATION\nFOR DEVELOPMENT.",
     [X4_TR_X_OPEN] = "X  OPEN",
     [X4_TR_HOME_HINT] = "OPEN ACCOUNT TO SIGN IN AND BROWSE THE CATALOG.",
-    [X4_TR_HOME_FOOTER_PUBLIC] = "D-PAD  SELECT     X  OPEN     TO EXIT: PS BUTTON > CLOSE APPLICATION",
-    [X4_TR_HOME_FOOTER_LAB] = "D-PAD  SELECT     X  OPEN     OPTIONS  EXIT",
+    [X4_TR_HOME_FOOTER_PUBLIC] = "D-PAD  SELECT     X  OPEN     OPTIONS  SETTINGS     TO EXIT: PS BUTTON > CLOSE APPLICATION",
+    [X4_TR_HOME_FOOTER_LAB] = "D-PAD  SELECT     X  OPEN     OPTIONS  SETTINGS     TO EXIT: PS BUTTON > CLOSE APPLICATION",
 
     [X4_TR_ABOUT_TITLE] = "ABOUT",
     [X4_TR_ABOUT_LINE1] = "XCLOUD4 " X4_PRODUCT_VERSION " - UNOFFICIAL XBOX CLOUD GAMING CLIENT FOR PS4",
-    [X4_TR_ABOUT_LINE2] = "REQUIRES XBOX GAME PASS WITH CLOUD GAMING AND A GOOD INTERNET CONNECTION.",
-    [X4_TR_ABOUT_LINE3] = "NOT AFFILIATED WITH MICROSOFT, XBOX OR SONY.",
+    [X4_TR_ABOUT_LINE2] = "REQUIRES GAME PASS WITH CLOUD GAMING, OR A FREE ACCOUNT WITH AN XBOX PROFILE FOR FREE GAMES LIKE FORTNITE.",
+    [X4_TR_ABOUT_LINE3] = "Independent project, not affiliated with Microsoft, Xbox or Sony. Use at your own risk.",
     [X4_TR_ABOUT_LINE4] = "FREE SOFTWARE GPL-3.0 - GITHUB.COM/ASP11EDGR/XCLOUD4",
     [X4_TR_ABOUT_LINE5] = "DEVELOPED BY ASAP_EDGR",
     [X4_TR_ABOUT_LINE6] = "CREDITS: OPENORBIS, GOLDHEN, LIBDATACHANNEL, OPUS, MBED TLS. REFERENCES: GREENVITA AND PSBOX.",
@@ -321,7 +414,7 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_SUPPORT_LINE5] = "THANK YOU FOR YOUR SUPPORT.",
 
     [X4_TR_EXIT_ERR_PUBLIC_FMT] = "COULD NOT EXIT: 0X%08X. TO EXIT: PS BUTTON > CLOSE APPLICATION.",
-    [X4_TR_EXIT_ERR_LAB_FMT] = "COULD NOT EXIT: 0X%08X. PRESS OPTIONS TO RETRY.",
+    [X4_TR_EXIT_ERR_LAB_FMT] = "COULD NOT EXIT: 0X%08X. PS BUTTON > CLOSE APPLICATION.",
 
     [X4_TR_AUTH_TITLE] = "YOUR MICROSOFT ACCOUNT",
     [X4_TR_AUTH_PROMPT_PUBLIC] = "SIGN IN WITH YOUR MICROSOFT ACCOUNT FROM YOUR PHONE OR PC.",
@@ -343,8 +436,8 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_AUTH_IDLE_HINT_PUBLIC] = "PRESS X TO REQUEST A SIGN-IN CODE.\nYOUR PASSWORD IS ENTERED ON THE MICROSOFT PAGE.",
     [X4_TR_AUTH_IDLE_HINT_LAB] = "PRESS X FOR A CODE. SQUARE CHECKS CONNECTION.\nYOUR PASSWORD IS ENTERED ON THE MICROSOFT PAGE.",
     [X4_TR_DETAIL_HTTP_FMT] = "DETAIL 0X%08X    HTTP %d",
-    [X4_TR_AUTH_FOOTER_PUBLIC] = "X SIGN IN   TRIANGLE SIGN OUT   CIRCLE BACK   R1 CATALOG",
-    [X4_TR_AUTH_FOOTER_LAB] = "X SIGN IN   SQUARE CONNECTION   TRIANGLE SIGN OUT   CIRCLE BACK   OPTIONS EXIT",
+    [X4_TR_AUTH_FOOTER_PUBLIC] = "X SIGN IN   TRIANGLE SIGN OUT   OPTIONS SETTINGS   CIRCLE BACK   R1 CATALOG",
+    [X4_TR_AUTH_FOOTER_LAB] = "X SIGN IN   SQUARE CONNECTION   TRIANGLE SIGN OUT   OPTIONS SETTINGS   CIRCLE BACK",
     [X4_TR_AUTH_R1_HINT] = "R1 XBOX CATALOG. SELECT AN AVAILABLE TITLE TO PLAY.",
 
     [X4_TR_SESS_TITLE] = "GAME SESSION",
@@ -373,12 +466,12 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_SESS_CLEANUP_FAIL_FMT] = "UNCONFIRMED CLOSE: 0X%08X   HTTP %d",
     [X4_TR_SESS_DETAIL_FMT] = "DETAIL 0X%08X   HTTP %d",
     [X4_TR_SESS_FOOTER_PUBLIC] = "CIRCLE  CLOSE AND RETURN TO CATALOG     TO EXIT: PS BUTTON > CLOSE APPLICATION",
-    [X4_TR_SESS_FOOTER_LAB] = "CIRCLE  CLOSE AND RETURN TO CATALOG     OPTIONS  EXIT",
+    [X4_TR_SESS_FOOTER_LAB] = "CIRCLE  CLOSE AND RETURN TO CATALOG     TO EXIT: PS BUTTON > CLOSE APPLICATION",
     [X4_TR_GAME_TOUCH_HINT] = "IN GAME: HOLD TWO FINGERS ON THE TOUCHPAD FOR 1 S TO OPEN THE MENU",
 
     [X4_TR_LIVE_PACKETS_FMT] = "H264: %llu PACKETS, %llu FRAMES   OPUS: %llu PACKETS, %llu BLOCKS",
     [X4_TR_LIVE_VIDEO_ERR_PUBLIC_FMT] = "Code %d · audio %s · TO EXIT: PS BUTTON > CLOSE APPLICATION",
-    [X4_TR_LIVE_VIDEO_ERR_LAB_FMT] = "Code %d · audio %s · OPTIONS to exit",
+    [X4_TR_LIVE_VIDEO_ERR_LAB_FMT] = "Code %d · audio %s · TO EXIT: PS BUTTON > CLOSE APPLICATION",
     [X4_TR_LIVE_AUDIO_UNAVAIL] = "unavailable",
     [X4_TR_LIVE_AUDIO_ACTIVE] = "active",
     [X4_TR_LIVE_AUDIO_WAITING] = "waiting",
@@ -399,6 +492,8 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_VIDEO_REJECTED_DIM_LAB_FMT] = "Xbox sent %u×%u; this PS4 supports up to 1080p. Exit with OPTIONS.",
     [X4_TR_VIDEO_STOPPED_PUBLIC_FMT] = "Video stopped (code %d). Close via PS button.",
     [X4_TR_VIDEO_STOPPED_LAB_FMT] = "Video stopped (code %d). Exit with OPTIONS.",
+    [X4_TR_VIDEO_NO_FRAMES] = "Xbox didn't send any video. It may be a temporary Xbox problem with this game: try again or pick another server in OPTIONS.",
+    [X4_TR_CANCEL_HINT] = "CIRCLE Cancel",
 
     [X4_TR_CAT_DS4_CONNECTED] = "DualShock 4 connected",
     [X4_TR_CAT_DS4_CONNECT] = "Connect your DualShock 4",
@@ -424,15 +519,15 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_CAT_QUERYING] = "Contacting xCloud…",
     [X4_TR_CAT_PLAY_BTN] = "X  Play",
     [X4_TR_CAT_CHOOSE_GAME] = "Select a game",
-    [X4_TR_CAT_FOOTER_PUBLIC] = "D-Pad Select   X Play   L1/R1 Page   L2/R2 Filter   SQUARE Refresh   CIRCLE Account",
-    [X4_TR_CAT_FOOTER_LAB] = "D-Pad Select   X Play   L1/R1 Page   L2/R2 Filter   SQUARE Refresh   CIRCLE Account   OPTIONS Exit",
+    [X4_TR_CAT_FOOTER_PUBLIC] = "D-Pad Select   X Play   OPTIONS Settings   L1/R1 Page   L2/R2 Filter   SQUARE Refresh   CIRCLE Account",
+    [X4_TR_CAT_FOOTER_LAB] = "D-Pad Select   X Play   OPTIONS Settings   L1/R1 Page   L2/R2 Filter   SQUARE Refresh   CIRCLE Account",
     [X4_TR_CAT_FINISHING_COVERS] = "Finishing cover loading…",
     [X4_TR_CAT_RESULTS_FMT] = "%u results · Page %u/%u · %s",
     [X4_TR_KB_TITLE] = "Search games",
     [X4_TR_KB_PLACEHOLDER] = "Type a title or ID",
     [X4_TR_KB_HELP1] = "X Add   SQUARE Delete   TRIANGLE Clear",
     [X4_TR_KB_HELP2_PUBLIC] = "R1 Space   R2 Apply   CIRCLE Back",
-    [X4_TR_KB_HELP2_LAB] = "R1 Space   R2 Apply   CIRCLE Back   OPTIONS Exit",
+    [X4_TR_KB_HELP2_LAB] = "R1 Space   R2 Apply   CIRCLE Back",
     [X4_TR_ASSET_DOWNLOADING] = "Downloading…",
     [X4_TR_ASSET_READY] = "Ready",
     [X4_TR_ASSET_RETRY_PENDING] = "Retry pending",
@@ -448,6 +543,97 @@ static const char *const table_en[X4_TR_COUNT] = {
     [X4_TR_UPDATE_AVAILABLE_FMT] = "NEW VERSION AVAILABLE: %s",
     [X4_TR_UPDATE_FAILED] = "COULD NOT CHECK FOR UPDATES",
     [X4_TR_AUTH_SCAN_PHONE] = "SCAN WITH YOUR PHONE",
+
+    [X4_TR_XSTS_NO_PROFILE] = "Your account doesn't have an Xbox profile yet. Sign in once at xbox.com to create it, then sign in again.",
+    [X4_TR_XSTS_UNAVAILABLE_COUNTRY] = "Xbox Live isn't available in your account's country.",
+    [X4_TR_XSTS_AGE_VERIFICATION] = "Your account needs age verification at xbox.com.",
+    [X4_TR_XSTS_CHILD_ACCOUNT] = "This is a child account: an adult in the Microsoft family must give permission.",
+    [X4_TR_DETAIL_XBOX_HTTP_FMT] = "DETAIL XBOX %u    HTTP %d",
+
+    [X4_TR_NET_HINT_DNS] = "The console can't resolve internet addresses (DNS). Check Settings > Network and use a working manual DNS, e.g. 1.1.1.1 / 8.8.8.8.",
+    [X4_TR_NET_HINT_TIMEOUT] = "The connection timed out. Check your internet and try again.",
+    [X4_TR_NET_HINT_SSL_CERT] = "The console doesn't recognize the server certificate. Update XCloud4 to the latest version.",
+
+    [X4_TR_PIC_SETTINGS_TITLE] = "Picture settings",
+    [X4_TR_PIC_SETTINGS_SUBTITLE] = "Saved on the console and applied when you start your next game.",
+    [X4_TR_PIC_SETTINGS_SECTION] = "Picture quality",
+    [X4_TR_PIC_SETTINGS_OPT_1080P_ALTA] = "1080p High (recommended)",
+    [X4_TR_PIC_SETTINGS_OPT_1080P] = "1080p",
+    [X4_TR_PIC_SETTINGS_OPT_720P] = "720p",
+    [X4_TR_PIC_SETTINGS_TAG_1080P_ALTA] = "~10-13 Mbps",
+    [X4_TR_PIC_SETTINGS_TAG_1080P] = "~5-8 Mbps",
+    [X4_TR_PIC_SETTINGS_TAG_720P] = "~7 Mbps",
+    [X4_TR_PIC_SETTINGS_DESC_1080P_ALTA] = "1920x1080 at 60 fps, about 10-13 Mbps. The sharpest picture. Needs a stable connection of 15 Mbps or more (wired is best). Recommended.",
+    [X4_TR_PIC_SETTINGS_DESC_1080P] = "1920x1080 at 60 fps, up to 8 Mbps. Uses less bandwidth with a bit more compression. Good if the High option stutters.",
+    [X4_TR_PIC_SETTINGS_DESC_720P] = "1280x720 at 60 fps, about 7 Mbps. Less delay, because the console decodes each frame faster, but the picture is less sharp.",
+    [X4_TR_PIC_SETTINGS_FOOTER] = "UP/DOWN Choose     X Save     CIRCLE Cancel",
+    [X4_TR_PIC_SETTINGS_BANNER_1080P_ALTA] = "1080p · High",
+    [X4_TR_PIC_SETTINGS_BANNER_1080P] = "1080p",
+    [X4_TR_PIC_SETTINGS_BANNER_720P] = "720p",
+
+    [X4_TR_OPTIONS_TAB_PICTURE] = "Picture",
+    [X4_TR_OPTIONS_TAB_SERVER] = "Server",
+    [X4_TR_OPTIONS_FOOTER] = "L1/R1 Tab     UP/DOWN Choose     X Save     CIRCLE Cancel",
+    [X4_TR_SERVER_SETTINGS_SUBTITLE] = "ms are measured in your last game on each server. Applied when the catalog loads and when you start your next game.",
+    [X4_TR_SERVER_OPT_AUTO] = "Automatic (recommended)",
+    [X4_TR_SERVER_TAG_AUTO_FMT] = "Xbox picks: %s",
+    [X4_TR_SERVER_LAST_GAME] = "last game",
+    [X4_TR_SERVER_NOT_MEASURED] = "not measured",
+    [X4_TR_SERVER_MEASURING] = "measuring…",
+    [X4_TR_SERVER_NO_RESPONSE] = "no response",
+    [X4_TR_SERVER_NO_LIST] = "Sign in to see the servers Xbox offers to your account.",
+    [X4_TR_SERVER_NOT_AVAILABLE] = "Your chosen server is no longer available; Automatic is used.",
+    [X4_TR_SERVER_FIRST_TITLE] = "Choose your server",
+    [X4_TR_SERVER_FIRST_SUBTITLE] = "Pick the one with the lowest ms. You can change it anytime in OPTIONS.",
+    [X4_TR_ACCOUNT_HINT_FIRST_SERVER] = "AFTER SIGNING IN YOU CAN CHOOSE YOUR SERVER.",
+    [X4_TR_CAT_CHOOSE_SERVER_WAIT] = "Choose your server to continue",
+
+    [X4_TR_CARD_FORTNITE_TITLE] = "FORTNITE",
+    [X4_TR_CARD_FORTNITE_DESC] = "NO GAME PASS?\nPLAY FORTNITE FREE\nWITH YOUR\nMICROSOFT ACCOUNT.",
+    [X4_TR_X_PLAY] = "X  PLAY",
+    [X4_TR_FORTNITE_TITLE] = "FORTNITE",
+    [X4_TR_FORTNITE_PIC_QUALITY] = "PICTURE QUALITY",
+    [X4_TR_FORTNITE_HINT] = "If you notice stutters or your internet is slow, choose 1080p or 720p.",
+    [X4_TR_FORTNITE_FOOTER] = "UP/DOWN QUALITY     X PLAY     OPTIONS SERVER     CIRCLE BACK",
+    [X4_TR_FORTNITE_UNAVAILABLE] = "Fortnite isn't available for your account on this server. Try another server in OPTIONS.",
+    [X4_TR_FORTNITE_SEARCHING] = "Finding Fortnite on server…",
+    [X4_TR_FORTNITE_ERROR_FOOTER] = "OPTIONS SERVER     CIRCLE BACK",
+    [X4_TR_CLOUD_UNAVAILABLE_FMT] = "Xbox Cloud Gaming isn't available for your location or account (HTTP %d). XCloud4 can only use the servers Xbox offers you.",
+
+    [X4_TR_APPLE_YOUR_ACCOUNT] = "Your account",
+    [X4_TR_APPLE_HOME_TITLE] = "Your next game.",
+    [X4_TR_APPLE_HOME_SUBTITLE] = "Choose how you want to play.",
+    [X4_TR_APPLE_CARD_EXPLORE_TITLE] = "Explore catalog",
+    [X4_TR_APPLE_CARD_EXPLORE_SUB] = "Find your next adventure",
+    [X4_TR_APPLE_BTN_ENTER] = "Enter",
+    [X4_TR_APPLE_CARD_FORTNITE_TITLE] = "Fortnite",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB] = "Direct access",
+    [X4_TR_APPLE_CARD_ACCOUNT_TITLE] = "Account",
+    [X4_TR_APPLE_CARD_ACCOUNT_SUB_OUT] = "Sign in",
+    [X4_TR_APPLE_CARD_ACCOUNT_SUB_IN] = "Signed in",
+    [X4_TR_APPLE_PILL_SETTINGS] = "Settings",
+    [X4_TR_APPLE_PILL_ABOUT] = "About",
+    [X4_TR_APPLE_PILL_SUPPORT] = "Support",
+    [X4_TR_APPLE_HINT_SELECT] = "Select",
+    [X4_TR_APPLE_HINT_SETTINGS] = "Settings",
+    [X4_TR_APPLE_HINT_SEARCH] = "Search",
+    [X4_TR_APPLE_HINT_BACK] = "Back",
+    [X4_TR_APPLE_HINT_SERVER_FIRST] = "Once signed in, you can choose your server",
+    [X4_TR_APPLE_TAB_DISCOVER] = "Discover",
+    [X4_TR_APPLE_TAB_CATALOG] = "Catalog",
+    [X4_TR_APPLE_TAB_RECENTS] = "Recent",
+    [X4_TR_APPLE_TAB_FORTNITE] = "Fortnite",
+    [X4_TR_APPLE_HERO_FEATURED] = "FEATURED",
+    [X4_TR_APPLE_HERO_PLAY_NOW] = "Play now",
+    [X4_TR_APPLE_HERO_DEFAULT_SUB] = "Stream instantly on the cloud from your PS4 console.",
+    [X4_TR_APPLE_ROW_CONTINUE] = "Continue where you left off",
+    [X4_TR_APPLE_ROW_POPULAR] = "Popular",
+    [X4_TR_APPLE_PS_EXIT_HINT] = "PS button: Exit",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB1] = "No Game Pass? Play free",
+    [X4_TR_APPLE_CARD_FORTNITE_SUB2] = "with your Microsoft account.",
+    [X4_TR_APPLE_BADGE_FREE] = "Free",
+    [X4_TR_FORTNITE_REQ_LINE] = "Requires a Microsoft account with an Xbox profile. No Game Pass needed.",
+    [X4_TR_APPLE_HINT_RIGHT_STICK_READ_MORE] = "Right stick: read more",
 };
 
 const char *x4_tr(enum X4TextId id)
@@ -455,6 +641,39 @@ const char *x4_tr(enum X4TextId id)
     if (id < 0 || id >= X4_TR_COUNT) return "";
     const char *const *table = (current_lang == X4_LANG_ES) ? table_es : table_en;
     return table[id] ? table[id] : "";
+}
+
+int x4_lang_is_cloud_unavailable(int error, int http_status, uint32_t xerr,
+    const char *offering, const char *stage)
+{
+    if (xerr != 0) return 0;
+    int is_4xx = (http_status >= 400 && http_status < 500);
+    int is_xbox_offer_err = (error == -2010 /* X4_AUTH_E_XBOX */ || error == 0);
+    int not_other_stage = (!stage || !stage[0] || !strcmp(stage, "Xbox Cloud Gaming rechazo la cuenta"));
+    int is_second_offer = (!offering || !offering[0] || !strcmp(offering, "xgpuwebf2p"));
+    return (is_4xx && is_xbox_offer_err && not_other_stage && is_second_offer) ? 1 : 0;
+}
+
+const char *x4_lang_catalog_error_msg(int error, int http_status, uint32_t xerr,
+    const char *offering, const char *stage, char *buf, unsigned cap)
+{
+    if (xerr != 0) {
+        if (xerr == 2148916233u) return x4_tr(X4_TR_XSTS_NO_PROFILE);
+        if (xerr == 2148916235u) return x4_tr(X4_TR_XSTS_UNAVAILABLE_COUNTRY);
+        if (xerr == 2148916236u || xerr == 2148916237u) return x4_tr(X4_TR_XSTS_AGE_VERIFICATION);
+        if (xerr == 2148916238u) return x4_tr(X4_TR_XSTS_CHILD_ACCOUNT);
+        if (buf && cap > 0) {
+            snprintf(buf, cap, "%s (Xbox 0x%08X)", x4_tr(X4_TR_CAT_ERROR), xerr);
+            return buf;
+        }
+        return x4_tr(X4_TR_CAT_ERROR);
+    }
+    /* Both offerings (xgpuweb and xgpuwebf2p) rejected with 4xx and xerr == 0 */
+    if (x4_lang_is_cloud_unavailable(error, http_status, xerr, offering, stage) && buf && cap > 0) {
+        snprintf(buf, cap, x4_tr(X4_TR_CLOUD_UNAVAILABLE_FMT), http_status);
+        return buf;
+    }
+    return NULL;
 }
 
 static const struct {
@@ -532,6 +751,13 @@ const char *x4_tr_stage(const char *stage)
 {
     if (!stage || !stage[0]) return "";
     if (current_lang == X4_LANG_ES) return stage;
+    const char es_prefix[] = "Xbox está preparando el juego… ";
+    size_t es_pfx_len = strlen(es_prefix);
+    if (!strncmp(stage, es_prefix, es_pfx_len)) {
+        static char dynamic_stage[128];
+        snprintf(dynamic_stage, sizeof(dynamic_stage), "Xbox is getting your game ready… %s", stage + es_pfx_len);
+        return dynamic_stage;
+    }
     for (size_t i = 0; i < sizeof(stage_map) / sizeof(stage_map[0]); ++i) {
         if (!strcmp(stage, stage_map[i].es)) return stage_map[i].en;
     }

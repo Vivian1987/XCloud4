@@ -58,6 +58,12 @@ const X4CatalogSnapshot *x4_xbox_catalog(X4XboxWork *w,const char *token,const _
     w->catalog.state=X4_CATALOG_READY;w->catalog.count=1;strcpy(w->catalog.titles[0].id,"CURRENT_TITLE");strcpy(w->catalog.titles[0].product_id,"PROD1");strcpy(w->catalog.offering,"xgpuweb");
     w->recent.state=X4_CATALOG_READY;w->recent.count=1;strcpy(w->recent.title_ids[0],"CURRENT_TITLE");return &w->catalog;
 }
+const X4CatalogSnapshot *x4_xbox_fortnite_query(X4XboxWork *w,const char *token,const _Atomic int *cancel,X4XboxProgress progress,void *context)
+{
+    (void)token; (void)cancel; (void)progress; (void)context;
+    w->catalog.state=X4_CATALOG_READY;w->catalog.count=1;strcpy(w->catalog.titles[0].id,"FORTNITE");strcpy(w->catalog.titles[0].product_id,"BT5P2X999VH2");strcpy(w->catalog.titles[0].name,"Fortnite");strcpy(w->catalog.offering,"xgpuweb");strcpy(w->catalog.region,"host-region");
+    return &w->catalog;
+}
 const X4RecentSnapshot *x4_xbox_catalog_recent(const X4XboxWork *w){return &w->recent;}
 const X4RecentSnapshot *x4_xbox_recents(X4XboxWork *w,const char *token,const _Atomic int *cancel)
 {

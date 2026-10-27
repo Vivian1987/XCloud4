@@ -41,6 +41,12 @@ int main(int argc,char **argv)
     char partial[160];
     CHECK(!x4_stream_video_error_text(partial,sizeof(partial),2560,0,-7413));
     CHECK(!strcmp(partial,"Vídeo detenido (código -7413). Sal con OPTIONS."));
+    char no_frames[200];
+    CHECK(!x4_stream_video_error_text(no_frames,sizeof(no_frames),0,0,-7433));
+    CHECK(!strcmp(no_frames,"Xbox no envió imagen. Puede ser un problema temporal de Xbox con este juego: vuelve a intentarlo o prueba otro servidor en OPTIONS."));
+    char no_frames_cap[200];
+    CHECK(!x4_stream_video_error_caption(no_frames_cap,sizeof(no_frames_cap),-7433));
+    CHECK(!strcmp(no_frames_cap,"Xbox no envió imagen. Puede ser un problema temporal de Xbox con este juego: vuelve a intentarlo o prueba otro servidor en OPTIONS."));
     x4_font_close();
     printf("real streaming error formatter/font PASS: %u checks; 4 cases + bounds; profile=%d\n",checks,X4_STREAM_PROFILE);
     return 0;

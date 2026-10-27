@@ -57,6 +57,13 @@ typedef struct {
     int input_ready, input_error;
     uint64_t input_packets, input_dropped;
     unsigned elapsed_seconds, seconds_left;
+    /* Public queue diagnostics only: no identifier, credential or server body.
+     * The elapsed value remains available after leaving the queue. */
+    int waiting_for_resources, queue_limit_reached;
+    unsigned queue_elapsed_seconds;
+    /* Optional server estimate, counted down locally, never a guarantee. */
+    int queue_eta_available;
+    unsigned queue_eta_seconds;
     char stage[80], region[80], offering[24], title_name[128];
 } X4SessionSnapshot;
 

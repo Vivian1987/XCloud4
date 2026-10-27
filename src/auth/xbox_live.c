@@ -5,11 +5,14 @@
 #include "json.h"
 #include "xbox_recent.h"
 #include "../ui/lang.h"
+#include "../ui/server_settings.h"
 #include "../streaming/rtc_transport.h"
+#include "../streaming/rtc_receive_diag.h"
 #include "../streaming/stream_profile.h"
 #include "../streaming/stream_startup.h"
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
 #include "../streaming/keyframe_limiter.h"
+#include "../video/stream_pipeline.h"
 #endif
 #include <stdbool.h>
 #include <stdint.h>
@@ -47,6 +50,7 @@
  * (0.6.2) followed by real RTC signaling (0.7.0). Timings in monotonic usec. */
 #define X4_SESSION_USEC 1000000ull
 #define X4_SESSION_PROVISION_USEC (180ull * X4_SESSION_USEC)
+#define X4_SESSION_QUEUE_USEC (15ull * 60ull * X4_SESSION_USEC)
 #define X4_SESSION_NEGOTIATE_USEC (90ull * X4_SESSION_USEC)
 #define X4_SESSION_KEEPALIVE_USEC (30ull * X4_SESSION_USEC)
 #define X4_SESSION_ICE_POLL_USEC X4_SESSION_USEC
@@ -109,6 +113,9 @@ struct X4XboxWork {
     void *passport_context;
     X4SessionSnapshot session;
     uint64_t session_start;
+    uint64_t queue_started_at, queue_eta_received_at;
+    unsigned queue_eta_initial_seconds;
+    char queue_title_id[96];
     X4Rtc *rtc;
     X4SessionMediaCallback media_callback;
     void *media_user;
@@ -281,7 +288,15 @@ static int finish(X4XboxWork *w, enum X4CatalogState state, int error, int statu
 /* Publishes the session view with a fresh elapsed time. */
 static void session_publish(X4XboxWork *w)
 {
-    w->session.elapsed_seconds = (unsigned)((sceKernelGetProcessTime() - w->session_start) / X4_SESSION_USEC);
+    uint64_t t = sceKernelGetProcessTime();
+    w->session.elapsed_seconds = (unsigned)((t - w->session_start) / X4_SESSION_USEC);
+    if (w->session.waiting_for_resources)
+        w->session.queue_elapsed_seconds = (unsigned)((t - w->queue_started_at) / X4_SESSION_USEC);
+    if (w->session.waiting_for_resources && w->session.queue_eta_available) {
+        uint64_t elapsed = (t - w->queue_eta_received_at) / X4_SESSION_USEC;
+        w->session.queue_eta_seconds = elapsed < w->queue_eta_initial_seconds ?
+            w->queue_eta_initial_seconds - (unsigned)elapsed : 0;
+    }
     if (w->session_progress) w->session_progress(w->context, &w->session);
 }
 
@@ -362,9 +377,15 @@ static int user_token(X4XboxWork *w, const char *microsoft_token)
         wipe_response(w, length);
         return finish(w, X4_CATALOG_ERROR, X4_AUTH_E_XBOX, status, "Xbox rechazo la cuenta Microsoft");
     }
-    X4JsonSpan root;
+    X4JsonSpan root, claims, xui, item, gtg;
     bool ok = x4_json_parse(w->response, length, &root) == 0 &&
         read_token(root, "Token", w->user_token, sizeof(w->user_token));
+    if (ok && x4_json_member(root, "DisplayClaims", &claims) == 1 &&
+        x4_json_member(claims, "xui", &xui) == 1) {
+        size_t xc = 0;
+        if (x4_json_item(xui, &xc, &item) == 1 && x4_json_member(item, "gtg", &gtg) == 1)
+            x4_json_display_text(gtg, w->result.gamertag, sizeof(w->result.gamertag));
+    }
     wipe_response(w, length);
     if (!ok) return finish(w, X4_CATALOG_ERROR, X4_AUTH_E_RESPONSE, status, "token Xbox no valido");
     return 0;
@@ -404,6 +425,15 @@ static int xsts(X4XboxWork *w)
     }
     bool ok = x4_json_parse(w->response, length, &root) == 0 &&
         read_token(root, "Token", w->xsts_token, sizeof(w->xsts_token));
+    if (ok && !w->result.gamertag[0]) {
+        X4JsonSpan claims, xui, item, gtg;
+        size_t xc = 0;
+        if (x4_json_member(root, "DisplayClaims", &claims) == 1 &&
+            x4_json_member(claims, "xui", &xui) == 1 &&
+            x4_json_item(xui, &xc, &item) == 1 &&
+            x4_json_member(item, "gtg", &gtg) == 1)
+            x4_json_display_text(gtg, w->result.gamertag, sizeof(w->result.gamertag));
+    }
     wipe_response(w, length);
     if (!ok) return finish(w, X4_CATALOG_ERROR, X4_AUTH_E_RESPONSE, status, "token XSTS no valido");
     return 0;
@@ -419,10 +449,7 @@ static bool region_name(const char *name)
     return true;
 }
 
-/* baseUri must be https://<host> with an optional final '/'. The host is
- * lowercased and must end in the GSSV suffix; the HTTP layer checks labels
- * again before any connection. */
-static bool region_url(X4XboxWork *w, const char *base, char *host, size_t capacity)
+static bool extract_region_host(const char *base, char *host, size_t capacity)
 {
     static const char scheme[] = "https://";
     static const char suffix[] = X4_XBOX_GSSV_SUFFIX;
@@ -439,35 +466,162 @@ static bool region_url(X4XboxWork *w, const char *base, char *host, size_t capac
     }
     host[n] = 0;
     if (memcmp(host + n - tail, suffix, tail)) return false;
-    int origin = snprintf(w->origin, sizeof(w->origin), "https://%s", host);
-    int written = snprintf(w->url, sizeof(w->url), "https://%s/v2/titles", host);
-    if (origin > 0 && (size_t)origin < sizeof(w->origin) && written > 0 && (size_t)written < sizeof(w->url))
-        return true;
-    x4_secure_clear(w->origin, sizeof(w->origin));
-    return false;
+    return true;
 }
 
-/* First region flagged isDefault. Its name is shown when plain, else its host. */
+
+static bool str_eq_ci(const char *s1, const char *s2)
+{
+    if (!s1 || !s2) return false;
+    while (*s1 && *s2) {
+        unsigned char c1 = (unsigned char)*s1;
+        unsigned char c2 = (unsigned char)*s2;
+        if (c1 >= 'A' && c1 <= 'Z') c1 = (unsigned char)(c1 + ('a' - 'A'));
+        if (c2 >= 'A' && c2 <= 'Z') c2 = (unsigned char)(c2 + ('a' - 'A'));
+        if (c1 != c2) return false;
+        s1++;
+        s2++;
+    }
+    return *s1 == *s2;
+}
+
+static X4ServerRegion s_parsed_regions[X4_SERVER_MAX_REGIONS];
+
+/* Reads all regions (up to 32), updates server settings, and selects server. */
 static bool default_region(X4XboxWork *w, X4JsonSpan root)
 {
     X4JsonSpan settings, regions, item, v;
     if (x4_json_member(root, "offeringSettings", &settings) != 1 ||
         x4_json_member(settings, "regions", &regions) != 1) return false;
+
+    X4ServerRegion *parsed = s_parsed_regions;
+    memset(parsed, 0, sizeof(s_parsed_regions));
+    unsigned count = 0;
     size_t cursor = 0;
-    while (x4_json_item(regions, &cursor, &item) == 1) {
+    while (x4_json_item(regions, &cursor, &item) == 1 && count < X4_SERVER_MAX_REGIONS) {
+        char base[256] = {0}, api_host[128] = {0}, name[64] = {0}, net_test[128] = {0}, net_test_host[128] = {0};
         int is_default = 0;
-        if (x4_json_member(item, "isDefault", &v) != 1 || x4_json_bool(v, &is_default) < 0 || !is_default)
+        if (x4_json_member(item, "baseUri", &v) != 1 || x4_json_token(v, base, sizeof(base)) < 0)
             continue;
-        char base[256], host[256], name[sizeof(w->result.region)];
-        if (x4_json_member(item, "baseUri", &v) != 1 || x4_json_token(v, base, sizeof(base)) < 0 ||
-            !region_url(w, base, host, sizeof(host)))
-            return false;
-        if (x4_json_member(item, "name", &v) == 1 && x4_json_token(v, name, sizeof(name)) == 0 && region_name(name))
-            copy_text(w->result.region, sizeof(w->result.region), name);
-        else copy_text(w->result.region, sizeof(w->result.region), host);
-        return true;
+        if (!extract_region_host(base, api_host, sizeof(api_host)))
+            continue;
+
+        /* If networkTestHostname is present and valid, use it for net_test_host, NOT host */
+        if (x4_json_member(item, "networkTestHostname", &v) == 1 &&
+            x4_json_token(v, net_test, sizeof(net_test)) == 0 && net_test[0]) {
+            char test_base[256];
+            snprintf(test_base, sizeof(test_base), "https://%s", net_test);
+            char thost[128];
+            if (extract_region_host(test_base, thost, sizeof(thost))) {
+                snprintf(net_test_host, sizeof(net_test_host), "%s", thost);
+            }
+        }
+
+        if (x4_json_member(item, "name", &v) == 1 && x4_json_token(v, name, sizeof(name)) == 0 && region_name(name)) {
+            /* valid name */
+        } else {
+            snprintf(name, sizeof(name), "%s", api_host);
+        }
+
+        if (x4_json_member(item, "isDefault", &v) == 1) {
+            (void)x4_json_bool(v, &is_default);
+        }
+
+        /* Collect and log other fields from the region object */
+        char other_fields[256] = {0};
+        size_t obj_cur = 0;
+        X4JsonSpan m_key, m_val;
+        bool first_other = true;
+        while (x4_json_object_member(item, &obj_cur, &m_key, &m_val) == 1) {
+            char kstr[64] = {0};
+            if (x4_json_text(m_key, kstr, sizeof(kstr)) < 0) continue;
+            if (!strcmp(kstr, "name") || !strcmp(kstr, "baseUri") ||
+                !strcmp(kstr, "networkTestHostname") || !strcmp(kstr, "isDefault"))
+                continue;
+            if (strstr(kstr, "token") || strstr(kstr, "secret") || strstr(kstr, "auth")) continue;
+
+            printf("  [campo %s] %s = %.*s\n", name, kstr, (int)m_val.length, m_val.data);
+
+            size_t cur_len = strlen(other_fields);
+            if (cur_len + m_key.length + m_val.length + 8 < sizeof(other_fields)) {
+                snprintf(other_fields + cur_len, sizeof(other_fields) - cur_len,
+                    "%s\"%s\":%.*s", first_other ? "" : ",", kstr, (int)m_val.length, m_val.data);
+                first_other = false;
+            }
+        }
+
+        snprintf(parsed[count].name, sizeof(parsed[count].name), "%s", name);
+        snprintf(parsed[count].api_host, sizeof(parsed[count].api_host), "%s", api_host);
+        snprintf(parsed[count].host, sizeof(parsed[count].host), "%s", api_host);
+        snprintf(parsed[count].net_test_host, sizeof(parsed[count].net_test_host), "%s", net_test_host);
+        snprintf(parsed[count].base_uri, sizeof(parsed[count].base_uri), "https://%s", api_host);
+        parsed[count].is_default = (is_default != 0);
+        parsed[count].last_game_ms = 0;
+        copy_text(parsed[count].other_fields, sizeof(parsed[count].other_fields), other_fields);
+        count++;
     }
-    return false;
+
+    if (count == 0) return false;
+
+    /* Log received regions to klog */
+    printf("XCloud4: Regiones recibidas de Xbox (%u):\n", count);
+    for (unsigned i = 0; i < count; ++i) {
+        printf("  [%u] %s (isDefault=%d, api_host=%s, net_test_host=%s)\n",
+            i, parsed[i].name, parsed[i].is_default ? 1 : 0,
+            parsed[i].api_host, parsed[i].net_test_host[0] ? parsed[i].net_test_host : "sin dato");
+    }
+
+    /* Update server settings state */
+    x4_server_settings_update_regions(parsed, count);
+
+    /* First-time flow: if no choice saved in server-v1.bin, wait for user choice */
+    if (!x4_server_settings_has_saved_choice()) {
+        x4_server_settings_reset_ui_drawn();
+        x4_server_settings_set_awaiting_first_choice(true);
+        uint64_t wait_start = sceKernelGetProcessTime();
+        bool confirmed_drawn = false;
+        while (x4_server_settings_awaiting_first_choice() && !atomic_load(w->cancel)) {
+            if (!confirmed_drawn) {
+                if (x4_server_settings_is_ui_drawn()) {
+                    confirmed_drawn = true;
+                } else if (sceKernelGetProcessTime() - wait_start >= 2000000ULL) {
+                    printf("XCloud4: primer servidor: panel no visible, se usa Automático\n");
+                    x4_server_settings_notify_choice_done();
+                    break;
+                }
+            }
+            sceKernelUsleep(50000); /* 50 ms */
+        }
+        if (atomic_load(w->cancel)) return false;
+    }
+
+    /* Select server: user's saved selection if present in list, else isDefault (or index 0) */
+    const char *sel_name = x4_server_settings_get_selected();
+    int chosen_idx = -1;
+    if (sel_name && sel_name[0]) {
+        for (unsigned i = 0; i < count; ++i) {
+            if (str_eq_ci(sel_name, parsed[i].name)) {
+                chosen_idx = (int)i;
+                break;
+            }
+        }
+    }
+    if (chosen_idx < 0) {
+        for (unsigned i = 0; i < count; ++i) {
+            if (parsed[i].is_default) {
+                chosen_idx = (int)i;
+                break;
+            }
+        }
+        if (chosen_idx < 0) chosen_idx = 0;
+    }
+
+    const char *sel_host = parsed[chosen_idx].api_host[0] ? parsed[chosen_idx].api_host : parsed[chosen_idx].host;
+    snprintf(w->origin, sizeof(w->origin), "https://%s", sel_host);
+    snprintf(w->url, sizeof(w->url), "https://%s/v2/titles", sel_host);
+    copy_text(w->result.region, sizeof(w->result.region), parsed[chosen_idx].name);
+    printf("XCloud4: Servidor seleccionado: %s (%s)\n", parsed[chosen_idx].name, sel_host);
+    return true;
 }
 
 /* XSTS -> cloud credentials for one offering. 0 on success, 1 when the
@@ -778,6 +932,102 @@ static void run(X4XboxWork *w, const char *microsoft_token)
     finish(w, X4_CATALOG_READY, 0, w->result.http_status, "catalogo listo");
 }
 
+static void fortnite_run(X4XboxWork *w, const char *microsoft_token)
+{
+    if (user_token(w, microsoft_token) || xsts(w)) return;
+    int rc = login(w, 0);
+    if (rc == 1) rc = login(w, 1);
+    x4_secure_clear(w->xsts_token, sizeof(w->xsts_token));
+    if (rc) return;
+
+    size_t length = 0;
+    int status = 0;
+    step(w, "buscando Fortnite en el servidor");
+    int written = snprintf(w->authorization, sizeof(w->authorization), "Bearer %s", w->gs_token);
+    if (written < 0 || (size_t)written >= sizeof(w->authorization)) {
+        x4_secure_clear(w->authorization, sizeof(w->authorization));
+        finish(w, X4_CATALOG_ERROR, X4_AUTH_E_FORM, 0, "credencial de region");
+        return;
+    }
+    const X4HttpHeader headers[] = {
+        {"Authorization", w->authorization},
+        {"x-gssv-client", "XboxComBrowser"},
+        {"X-MS-Device-Info", X4_XBOX_DEVICE_INFO(w)},
+    };
+    rc = call(w, w->url, headers, sizeof(headers) / sizeof(headers[0]), false, &length, &status);
+    x4_secure_clear(w->authorization, sizeof(w->authorization));
+    if (rc) { failed(w, rc); return; }
+    if (status != 200) {
+        wipe_response(w, length);
+        finish(w, X4_CATALOG_ERROR, status == 401 || status == 403 ? X4_AUTH_E_XBOX : X4_AUTH_E_STATUS,
+            status, "Xbox rechazo la lista de titulos");
+        return;
+    }
+    X4JsonSpan root, results, item;
+    if (x4_json_parse(w->response, length, &root) || x4_json_member(root, "results", &results) != 1 ||
+        x4_json_type(results) != X4_JSON_T_ARRAY) {
+        wipe_response(w, length);
+        finish(w, X4_CATALOG_ERROR, X4_AUTH_E_RESPONSE, status, "lista de titulos no valida");
+        return;
+    }
+
+    X4CatalogTitle t;
+    size_t cursor = 0;
+    int more;
+    bool found = false;
+    X4CatalogTitle fortnite_match = {0};
+
+    while ((more = x4_json_item(results, &cursor, &item)) == 1) {
+        if (atomic_load(w->cancel)) {
+            wipe_response(w, length);
+            finish(w, X4_CATALOG_CANCELLED, 0, 0, "consulta cancelada");
+            return;
+        }
+        if (!title_entry(item, &t)) continue;
+        if (!t.product_id[0]) {
+            X4JsonSpan pv;
+            if (x4_json_member(item, "productId", &pv) == 1) {
+                if (x4_json_token(pv, t.product_id, sizeof(t.product_id)) < 0 || !product_id(t.product_id))
+                    t.product_id[0] = 0;
+            }
+        }
+        /* Match product ID "BT5P2X999VH2" or fallback titleId "FORTNITE" */
+        if ((t.product_id[0] && !strcasecmp(t.product_id, "BT5P2X999VH2")) ||
+            (t.id[0] && !strcasecmp(t.id, "FORTNITE"))) {
+            fortnite_match = t;
+            found = true;
+            break;
+        }
+    }
+    wipe_response(w, length);
+
+    if (found) {
+        w->result.state = X4_CATALOG_READY;
+        w->result.count = 1;
+        w->result.total = 1;
+        w->result.truncated = 0;
+        w->result.http_status = status;
+        w->result.error = 0;
+        copy_text(fortnite_match.name, sizeof(fortnite_match.name), "Fortnite");
+        if (!fortnite_match.product_id[0]) {
+            copy_text(fortnite_match.product_id, sizeof(fortnite_match.product_id), "BT5P2X999VH2");
+        }
+        fortnite_match.entitled = 1;
+        w->result.titles[0] = fortnite_match;
+        finish(w, X4_CATALOG_READY, 0, status, "Fortnite listo");
+        printf("XCloud4: Fortnite encontrado en %s (id=%s, prod=%s)\n",
+            w->result.region, fortnite_match.id, fortnite_match.product_id);
+    } else {
+        w->result.state = X4_CATALOG_ERROR;
+        w->result.count = 0;
+        w->result.total = 0;
+        w->result.http_status = status;
+        w->result.error = X4_AUTH_E_FORTNITE_NOT_FOUND;
+        finish(w, X4_CATALOG_ERROR, X4_AUTH_E_FORTNITE_NOT_FOUND, status, "Fortnite no disponible en este servidor");
+        printf("XCloud4: Fortnite no encontrado en %s\n", w->result.region);
+    }
+}
+
 const X4CatalogSnapshot *x4_xbox_catalog(X4XboxWork *w, const char *microsoft_token,
     const _Atomic int *cancel, X4XboxProgress progress, void *context)
 {
@@ -814,6 +1064,41 @@ const X4CatalogSnapshot *x4_xbox_catalog(X4XboxWork *w, const char *microsoft_to
     }
     printf("XCloud4: catalogo Xbox fin estado=%d http=%d error=0x%08x xerr=%u titulos=%u/%u\n",
         (int)r->state, r->http_status, (unsigned)r->error, (unsigned)r->xerr, r->count, r->total);
+    return r;
+}
+
+const X4CatalogSnapshot *x4_xbox_fortnite_query(X4XboxWork *w, const char *microsoft_token,
+    const _Atomic int *cancel, X4XboxProgress progress, void *context)
+{
+    memset(&w->result, 0, sizeof(w->result));
+    memset(&w->recent, 0, sizeof(w->recent));
+    w->result.state = X4_CATALOG_LOADING;
+    w->cancel = cancel;
+    w->progress = progress;
+    w->session_progress = NULL;
+    w->context = context;
+    int rc = 0;
+    step(w, "iniciando HTTPS");
+    w->http = x4_http_open(&rc);
+    if (!w->http) finish(w, X4_CATALOG_ERROR, rc, 0, "inicio HTTPS (red/TLS)");
+    else fortnite_run(w, microsoft_token);
+    x4_http_close(w->http);
+    w->http = NULL;
+    x4_secure_clear(w->user_token, sizeof(w->user_token));
+    x4_secure_clear(w->xsts_token, sizeof(w->xsts_token));
+    x4_secure_clear(w->gs_token, sizeof(w->gs_token));
+    x4_secure_clear(w->authorization, sizeof(w->authorization));
+    x4_secure_clear(w->request, sizeof(w->request));
+    x4_secure_clear(w->url, sizeof(w->url));
+    x4_secure_clear(w->origin, sizeof(w->origin));
+    X4CatalogSnapshot *r = &w->result;
+    if (r->state != X4_CATALOG_READY) {
+        memset(r->titles, 0, sizeof(r->titles));
+        r->count = r->total = 0;
+        r->truncated = 0;
+    }
+    printf("XCloud4: consulta Fortnite fin estado=%d http=%d error=0x%08x region=%s\n",
+        (int)r->state, r->http_status, (unsigned)r->error, r->region);
     return r;
 }
 
@@ -1067,6 +1352,7 @@ static void session_auth_failed(X4XboxWork *w)
  * published for 0 and -1. */
 static int session_create(X4XboxWork *w, const X4CatalogTitle *title)
 {
+    copy_text(w->queue_title_id, sizeof(w->queue_title_id), title->id);
     size_t length = 0;
 #if !X4_STREAM_PROFILE
     size_t used = 0;
@@ -1133,49 +1419,97 @@ static int session_create(X4XboxWork *w, const X4CatalogTitle *title)
     return 1;
 }
 
-/* GET .../state every 2 s until READY, a failure, cancel or the deadline.
- * true when READY was reached; otherwise *end holds the outcome. */
+/* Greenlight 91b0b7eef7325249207a23320a9a782ff0b045ba:
+ * xcloudapi.ts:150-152; streammanager.ts:189-199. One optional authenticated
+ * GET per entry into WaitingForResources, on the already validated region.
+ * Only the documented unsigned seconds field is accepted (at most 24 h).
+ * No retry, endpoint guess, position, URL or private response is published. */
+static void session_queue_estimate(X4XboxWork *w)
+{
+    w->session.queue_eta_available = 0;
+    w->session.queue_eta_seconds = 0;
+    size_t n = strlen(w->queue_title_id);
+    if (!n || n >= sizeof(w->queue_title_id)) return;
+    for (size_t i = 0; i < n; ++i)
+        if (!alphanumeric((unsigned char)w->queue_title_id[i]) &&
+            w->queue_title_id[i] != '-' && w->queue_title_id[i] != '_') return;
+    int written = snprintf(w->url, sizeof(w->url), "%s/v1/waittime/%s", w->origin, w->queue_title_id);
+    if (written <= 0 || (size_t)written >= sizeof(w->url)) return;
+    size_t length = 0; int status = 0;
+    int rc = session_call(w, X4_SESSION_HTTP_GET, NULL, w->cancel, &length, &status);
+    uint32_t seconds = 0;
+    X4JsonSpan root, field;
+    bool valid = !rc && status == 200 && x4_json_parse(w->response, length, &root) == 0 &&
+        x4_json_member(root, "estimatedTotalWaitTimeInSeconds", &field) == 1 &&
+        x4_json_uint32(field, &seconds) == 0 && seconds <= 24u * 60u * 60u;
+    wipe_response(w, length);
+    if (valid) {
+        w->queue_eta_initial_seconds = seconds;
+        w->queue_eta_received_at = session_now();
+        w->session.queue_eta_available = 1;
+        w->session.queue_eta_seconds = seconds;
+    }
+    printf("XCloud4: fila Xbox ETA retorno=0x%08x http=%d disponible=%d segundos=%u orientativa=1\n",
+        (unsigned)rc, status, valid ? 1 : 0, valid ? (unsigned)seconds : 0);
+}
+
+/* A queue is server-reported, not inferred from HTTP timing. No ETA is
+ * fabricated and polling keeps the exact existing /state route/cadence. */
+static void session_queue_leave(X4XboxWork *w, uint64_t t, const char *result)
+{
+    if (!w->session.waiting_for_resources) return;
+    w->session.queue_elapsed_seconds = (unsigned)((t - w->queue_started_at) / X4_SESSION_USEC);
+    w->session.waiting_for_resources = 0;
+    w->session.queue_eta_available = 0;
+    printf("XCloud4: fila Xbox fin espera_s=%u resultado=%s\n", w->session.queue_elapsed_seconds, result);
+}
+
+static bool session_provision_limit(X4XboxWork *w, SessionEnd *end, int status)
+{
+    if (w->session.waiting_for_resources) {
+        w->session.queue_limit_reached = 1;
+        session_queue_leave(w, session_now(), "limite");
+        end_with(end, X4_SESSION_ERROR, X4_AUTH_E_DEADLINE, status, "limite de espera en la fila de Xbox");
+    } else end_with(end, X4_SESSION_ERROR, X4_AUTH_E_DEADLINE, status, "Xbox no preparo la sesion a tiempo");
+    return false;
+}
+
+/* GET .../state every 2 s until READY, failure or cancel. WaitingForResources
+ * owns a separate 15 min deadline. Leaving it restarts the ordinary 180 s
+ * provision window, never the RTC/HTTP/native deadlines. */
 static bool session_provision(X4XboxWork *w, uint64_t deadline, SessionEnd *end)
 {
     uint64_t next = session_now();
     session_state(w, X4_SESSION_WAITING, "esperando respuesta de Xbox", seconds_until(deadline, next));
     for (;;) {
         int waited = session_wait(w, next, deadline);
-        if (waited == 1) { end_with(end, X4_SESSION_CANCELLED, 0, 0, "sesion cancelada"); return false; }
-        if (waited == 2) {
-            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_DEADLINE, 0, "Xbox no preparo la sesion a tiempo");
-            return false;
+        if (waited == 1) {
+            session_queue_leave(w, session_now(), "cancelado");
+            end_with(end, X4_SESSION_CANCELLED, 0, 0, "sesion cancelada"); return false;
         }
+        if (waited == 2) return session_provision_limit(w, end, 0);
         if (!session_url(w, w->session_id, "/state")) {
-            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_FORM, 0, "consulta de estado");
-            return false;
+            session_queue_leave(w, session_now(), "cancelado");
+            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_FORM, 0, "consulta de estado"); return false;
         }
         size_t length = 0;
         int status = 0;
         int rc = session_call(w, X4_SESSION_HTTP_GET, NULL, w->cancel, &length, &status);
         uint64_t done = session_now();
         if (rc == X4_HTTP_CANCELLED || atomic_load(w->cancel)) {
-            wipe_response(w, length);
-            end_with(end, X4_SESSION_CANCELLED, 0, 0, "sesion cancelada");
-            return false;
+            wipe_response(w, length); session_queue_leave(w, done, "cancelado");
+            end_with(end, X4_SESSION_CANCELLED, 0, 0, "sesion cancelada"); return false;
         }
-        if (rc) { transport_end(w, end, rc); return false; }
-        /* A request may finish after the provisioning deadline. Do not
-         * publish a late READY response as success. Cleanup still follows. */
-        if (done >= deadline) {
-            wipe_response(w, length);
-            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_DEADLINE, status,
-                "Xbox no preparo la sesion a tiempo");
-            return false;
+        if (rc) { session_queue_leave(w, done, "cancelado"); transport_end(w, end, rc); return false; }
+        /* An established queue may not publish a response beyond its bound. */
+        if (w->session.waiting_for_resources && done >= deadline) {
+            wipe_response(w, length); return session_provision_limit(w, end, status);
         }
         if (status != 200) {
-            wipe_response(w, length);
+            wipe_response(w, length); session_queue_leave(w, done, "cancelado");
             end_with(end, X4_SESSION_ERROR, status == 401 || status == 403 ? X4_AUTH_E_XBOX : X4_AUTH_E_STATUS,
-                status, "estado HTTP inesperado de la sesion");
-            return false;
+                status, "estado HTTP inesperado de la sesion"); return false;
         }
-        /* A string state is required; one that does not fit or is not plain
-         * ASCII reads as empty, i.e. unknown, and keeps the bounded wait. */
         char state[40] = {0};
         X4JsonSpan root, v;
         bool valid = x4_json_parse(w->response, length, &root) == 0 && x4_json_member(root, "state", &v) == 1 &&
@@ -1183,8 +1517,30 @@ static bool session_provision(X4XboxWork *w, uint64_t deadline, SessionEnd *end)
         if (valid && x4_json_token(v, state, sizeof(state)) < 0) state[0] = 0;
         wipe_response(w, length);
         if (!valid) {
-            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_RESPONSE, status, "estado de sesion no valido");
-            return false;
+            session_queue_leave(w, done, "cancelado");
+            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_RESPONSE, status, "estado de sesion no valido"); return false;
+        }
+        bool queued = !strcmp(state, "WaitingForResources");
+        if (queued && !w->session.waiting_for_resources) {
+            w->queue_started_at = done;
+            w->session.waiting_for_resources = 1;
+            w->session.queue_elapsed_seconds = 0;
+            deadline = done + X4_SESSION_QUEUE_USEC;
+            printf("XCloud4: fila Xbox inicio\n");
+            session_state(w, X4_SESSION_WAITING, "esperando recursos de Xbox", seconds_until(deadline, done));
+            session_queue_estimate(w);
+            done = session_now();
+            if (atomic_load(w->cancel)) {
+                session_queue_leave(w, done, "cancelado");
+                end_with(end, X4_SESSION_CANCELLED, 0, 0, "sesion cancelada"); return false;
+            }
+            if (done >= deadline) return session_provision_limit(w, end, status);
+            session_publish(w);
+        } else if (!queued && w->session.waiting_for_resources) {
+            session_queue_leave(w, done, !strcmp(state, "Failed") || !strcmp(state, "Error") ? "cancelado" : "listo");
+            deadline = done + X4_SESSION_PROVISION_USEC;
+        } else if (!queued && done >= deadline) {
+            x4_secure_clear(state, sizeof(state)); return session_provision_limit(w, end, status);
         }
         const char *stage = NULL;
         enum X4SessionState next_state = remote_state(state, &stage);
@@ -1192,15 +1548,11 @@ static bool session_provision(X4XboxWork *w, uint64_t deadline, SessionEnd *end)
         x4_secure_clear(state, sizeof(state));
         w->session.http_status = status;
         if (next_state == X4_SESSION_ERROR) {
-            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_SESSION, status, stage);
-            return false;
+            end_with(end, X4_SESSION_ERROR, X4_AUTH_E_SESSION, status, stage); return false;
         }
         if (next_state == X4_SESSION_READY) {
-            /* Server-side readiness only; nothing is connected or rendered. */
-            w->session.ready_seen = 1;
-            w->provisioned = provisioned;
-            session_state(w, X4_SESSION_READY, stage, 0);
-            return true;
+            w->session.ready_seen = 1; w->provisioned = provisioned;
+            session_state(w, X4_SESSION_READY, stage, 0); return true;
         }
         if (strcmp(w->session.stage, stage)) session_state(w, X4_SESSION_WAITING, stage, seconds_until(deadline, done));
         next = done + X4_SESSION_POLL_USEC;
@@ -1463,6 +1815,23 @@ static bool signal_remote_sdp(X4XboxWork *w, X4JsonSpan exchange)
             if (decoded_length >= 5 && !memcmp(w->sdp, "v=0\r\n", 5)) header_class = 2;
             else if (decoded_length >= 4 && !memcmp(w->sdp, "v=0\n", 4)) header_class = 3;
             else if (decoded_length >= 7 && !memcmp(w->sdp, "v=0\\r\\n", 7)) header_class = 4;
+        }
+
+        /* Record any remote ICE candidates embedded in SDP answer */
+        const char *line = w->sdp;
+        while (line && *line) {
+            const char *eol = strpbrk(line, "\r\n");
+            size_t llen = eol ? (size_t)(eol - line) : strlen(line);
+            if (llen > 12 && (!strncmp(line, "a=candidate:", 12) || !strncmp(line, "candidate:", 10))) {
+                char cline[256];
+                if (llen >= sizeof(cline)) llen = sizeof(cline) - 1;
+                memcpy(cline, line, llen);
+                cline[llen] = 0;
+                x4_rtc_diag_record_remote_candidate(cline, "0");
+            }
+            if (!eol) break;
+            line = eol + 1;
+            if (*eol == '\r' && *line == '\n') line++;
         }
     }
     int state_member = x4_json_member(exchange, "status", &state);
@@ -1956,7 +2325,11 @@ static bool signal_sdp(X4XboxWork *w, uint64_t deadline, SessionEnd *end)
             int rc = x4_rtc_set_remote_description(w->rtc, w->sdp);
             x4_secure_clear(w->sdp, sizeof(w->sdp));
             if (rc < 0) { end_with(end, X4_SESSION_ERROR, rc, status, "WebRTC rechazo la respuesta SDP"); return false; }
-            printf("XCloud4: respuesta SDP aplicada HTTP %d\n", status);
+            uint32_t sdp_ssrc = 0, sdp_pt = 0;
+            char sdp_mid[32] = {0};
+            x4_rtc_get_sdp_video(w->rtc, &sdp_ssrc, &sdp_pt, sdp_mid, sizeof(sdp_mid));
+            printf("XCloud4: respuesta SDP aplicada HTTP %d (video SSRC=0x%08x pt=%u mid=%s)\n",
+                status, (unsigned)sdp_ssrc, (unsigned)sdp_pt, sdp_mid[0] ? sdp_mid : "");
             return signal_keepalive(w, deadline, end);
         }
         x4_secure_clear(w->exchange, sizeof(w->exchange));
@@ -2284,6 +2657,7 @@ static bool signal_remote_item(X4XboxWork *w, X4JsonSpan item, SessionEnd *end, 
         uint32_t index;
         if (x4_json_uint32(value, &index) || index > 64) goto malformed;
     }
+    x4_rtc_diag_record_remote_candidate(w->candidate, w->mid);
     if (!ipv6) { valid = signal_remote_add(w, end, stats, SIGNAL_REMOTE_ORIGINAL_NON_IPV6); goto done; }
     if (!signal_candidate_teredo(w->candidate, ipv4, &port, &teredo_reason)) {
         printf("XCloud4: ICE remoto IPv6 clase=1 razon=%u derivados=0 nuevos=0\n", teredo_reason);
@@ -2359,7 +2733,7 @@ malformed:
 
 /* Publishes state from the actual peer only. Packet counters describe
  * authenticated RTP receipt; native decoding/rendering is a separate stage. */
-static bool signal_rtc_view(X4XboxWork *w, SessionEnd *end, X4RtcSnapshot *view, uint64_t deadline)
+static bool signal_rtc_view(X4XboxWork *w, SessionEnd *end, X4RtcSnapshot *view, uint64_t deadline, bool *selected_pair_logged)
 {
     x4_rtc_snapshot(w->rtc, view);
     if (session_now() >= deadline) {
@@ -2378,6 +2752,13 @@ static bool signal_rtc_view(X4XboxWork *w, SessionEnd *end, X4RtcSnapshot *view,
         return false;
     }
     if (view->state == X4_RTC_CONNECTED) {
+        if (selected_pair_logged && !*selected_pair_logged && w->rtc) {
+            char loc[256] = {0}, rem[256] = {0};
+            if (x4_rtc_get_selected_candidate_pair(w->rtc, loc, sizeof(loc), rem, sizeof(rem)) >= 0 && rem[0]) {
+                *selected_pair_logged = true;
+                x4_rtc_diag_record_selected_pair(loc, rem);
+            }
+        }
         enum X4SessionState state = view->video_packets || view->audio_packets ? X4_SESSION_STREAMING : X4_SESSION_CONNECTING;
         const char *stage = view->video_packets && view->audio_packets ? "recibiendo imagen y sonido de Xbox" :
             view->video_packets ? "recibiendo video de Xbox; esperando audio" :
@@ -2417,6 +2798,8 @@ static void session_stream(X4XboxWork *w, SessionEnd *end)
     if (!signal_sdp(w, deadline, end)) goto done;
     session_state(w, X4_SESSION_CONNECTING, "negociando ruta ICE con Xbox", seconds_until(deadline, session_now()));
     uint64_t next_ice = session_now(), connected_at = 0, disconnected_at = 0;
+    uint64_t next_rtt_sample = 0;
+    bool selected_pair_logged = false;
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
     uint64_t last_no_media=0;bool no_media_posted=false;
 #else
@@ -2425,12 +2808,18 @@ static void session_stream(X4XboxWork *w, SessionEnd *end)
     for (;;) {
         if (signal_cancelled(w, end)) break;
         X4RtcSnapshot view;
-        if (!signal_rtc_view(w, end, &view, deadline)) break;
+        if (!signal_rtc_view(w, end, &view, deadline, &selected_pair_logged)) break;
         uint64_t t = session_now();
         if (view.state == X4_RTC_CONNECTED && !connected_at) {
             connected_at = t;
             deadline = UINT64_MAX;
+            next_rtt_sample = t + 3000000ULL;
             printf("XCloud4: conexion WebRTC establecida\n");
+        }
+        if (connected_at && view.state == X4_RTC_CONNECTED && t >= next_rtt_sample) {
+            int rtt = x4_rtc_get_rtt_ms(w->rtc);
+            if (rtt >= 0) x4_rtc_diag_record_rtt_sample(rtt);
+            next_rtt_sample = t + 1000000ULL;
         }
         if (!connected_at && t >= deadline) {
             end_with(end, X4_SESSION_ERROR, X4_AUTH_E_DEADLINE, 0, "WebRTC no conecto a tiempo"); break;
@@ -2492,6 +2881,16 @@ static void session_stream(X4XboxWork *w, SessionEnd *end)
         }
     }
 done:
+    {
+        X4RttSummary rtt_sum;
+        x4_rtc_diag_get_rtt_summary(&rtt_sum);
+        if (rtt_sum.sample_count >= 10 && rtt_sum.p50 >= 1 && rtt_sum.p50 <= 2000) {
+            const char *reg = w->result.region[0] ? w->result.region : w->session.region;
+            if (reg && reg[0]) {
+                x4_server_settings_record_game_rtt(reg, rtt_sum.p50);
+            }
+        }
+    }
     /* This joins transport callbacks before caller may release its media
      * receiver. It precedes remote DELETE and auth.finished publication. */
     int close_rc = x4_rtc_close(w->rtc);
@@ -2594,6 +2993,7 @@ const X4SessionSnapshot *x4_xbox_session(X4XboxWork *w, const char *microsoft_to
     w->local_candidates = w->remote_candidates = 0;
     w->provisioned = false;
     w->session_start = session_now();
+    w->queue_started_at = 0;
     size_t index = sizeof(offerings) / sizeof(offerings[0]);
     for (size_t i = 0; offering && i < sizeof(offerings) / sizeof(offerings[0]); ++i)
         if (!strcmp(offering, offerings[i].id)) index = i;

@@ -58,10 +58,17 @@ static int same_id(const char *a, const char *b)
 }
 static int image_rank(const char *purpose)
 {
-    if (!strcmp(purpose, "BrandedKeyArt")) return 5;
-    if (!strcmp(purpose, "Poster")) return 4;
-    if (!strcmp(purpose, "BoxArt")) return 3;
-    if (!strcmp(purpose, "Tile")) return 2;
+    if (!strcmp(purpose, "Poster")) return 6;
+    if (!strcmp(purpose, "BoxArt")) return 5;
+    if (!strcmp(purpose, "BrandedKeyArt")) return 4;
+    if (!strcmp(purpose, "Tile")) return 3;
+    if (!strcmp(purpose, "SuperHeroArt")) return 2;
+    if (!strcmp(purpose, "TitledHeroArt")) return 1;
+    return 0;
+}
+static int hero_rank(const char *purpose)
+{
+    if (!strcmp(purpose, "SuperHeroArt")) return 2;
     if (!strcmp(purpose, "TitledHeroArt")) return 1;
     return 0;
 }
@@ -95,7 +102,7 @@ int x4_product_metadata_parse(const char *json, size_t length, const char *id, X
         X4JsonSpan images, image;
         if (x4_json_member(first, "Images", &images) != 1) continue;
         size_t ic = 0;
-        int best = 0;
+        int best = 0, best_hero = 0;
         while (x4_json_item(images, &ic, &image) == 1) {
             char purpose[64], uri[X4_PUBLIC_COVER_URL_CAP], url[X4_PUBLIC_COVER_URL_CAP];
             uint32_t width, height;
@@ -106,6 +113,8 @@ int x4_product_metadata_parse(const char *json, size_t length, const char *id, X
                 !width || !height || width > 16384 || height > 16384 || !x4_product_cover_url(uri, url)) continue;
             int rank = image_rank(purpose);
             if (rank > best) { best = rank; memcpy(out->cover_url, url, strlen(url) + 1); }
+            int h_rank = hero_rank(purpose);
+            if (h_rank > best_hero) { best_hero = h_rank; memcpy(out->hero_url, url, strlen(url) + 1); }
         }
     }
     if (rc < 0) { memset(out, 0, sizeof(*out)); return -1; }
@@ -207,5 +216,19 @@ int x4_cover_decode(const unsigned char *encoded, size_t length, X4CoverRasters 
         raster(pixels, (unsigned)w, (unsigned)h, 96, 96, &out->surface[X4_COVER_RECENT]);
     stbi_image_free(pixels);
     if (rc) { x4_cover_rasters_free(out); return -1; }
+    return 0;
+}
+int x4_hero_decode(const unsigned char *encoded, size_t length, X4CoverRaster *out)
+{
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    if (!encoded || !length || length > X4_HTTP_IMAGE_MAX || length > INT_MAX || decode_allocated) return -1;
+    int w, h, channels;
+    if (!stbi_info_from_memory(encoded, (int)length, &w, &h, &channels) || w <= 0 || h <= 0 || w > 2048 || h > 2048) return -1;
+    unsigned char *pixels = stbi_load_from_memory(encoded, (int)length, &w, &h, &channels, 4);
+    if (!pixels) return -1;
+    int rc = raster(pixels, (unsigned)w, (unsigned)h, 512, 288, out);
+    stbi_image_free(pixels);
+    if (rc) { free(out->rgba); memset(out, 0, sizeof(*out)); return -1; }
     return 0;
 }

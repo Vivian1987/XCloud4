@@ -9,7 +9,7 @@ for mode in plain sanitized; do
   if [[ $mode == sanitized ]]; then sanitizer_flags="-fsanitize=address,undefined -fno-omit-frame-pointer -no-pie"; fi
   "${CC:-cc}" -std=gnu11 -O2 -g -Wall -Wextra -Werror ${X4_TEST_CFLAGS:-} \
     -DX4_STREAM_PROFILE=1 -Itests/host_stubs $sanitizer_flags \
-    tests/stream_startup_auth_bridge_test.c src/auth/json.c src/streaming/stream_profile.c src/streaming/keyframe_limiter.c \
+    tests/stream_startup_auth_bridge_test.c src/auth/json.c src/streaming/stream_profile.c src/streaming/keyframe_limiter.c src/ui/lang.c \
     -pthread -o "$build_dir/startup-auth-$mode"
   ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/startup-auth-$mode"
 done

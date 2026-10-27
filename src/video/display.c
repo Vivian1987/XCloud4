@@ -8,11 +8,13 @@
 int x4_display_open(X4Display *d)
 {
 #if X4_STREAM_PROFILE
-    if(!d||d->handle>=0||d->memory||d->allocated)return -9001;
+    if(!d||d->handle>=0||d->memory||d->allocated||d->ui)return -9001;
 #endif
     memset(d, 0, sizeof(*d));
     d->handle = -1;
     d->frame = 1;
+    d->ui = x4_ui_surface_create();
+    if(!d->ui)return -9002;
     const size_t alignment = 0x200000;
     const size_t pixels_size = (size_t)X4_WIDTH * X4_HEIGHT * sizeof(uint32_t);
     const size_t buffer_size = (pixels_size + alignment - 1) & ~(alignment - 1);
@@ -25,7 +27,8 @@ int x4_display_open(X4Display *d)
     d->allocated = 1;
     rc = sceKernelMapDirectMemory(&d->memory, d->size, 0x33, 0, d->offset, alignment);
     if (rc < 0) goto fail;
-    memset(d->memory, 0, d->size);
+    /* Scanout stays write-only. The first publication copies the entire
+     * zero-initialized WB canvas before any buffer can be submitted. */
     d->buffers[0] = d->memory;
     d->buffers[1] = (uint32_t *)((uint8_t *)d->memory + buffer_size);
     OrbisVideoOutBufferAttribute attr = {0};
@@ -46,9 +49,20 @@ fail:
 #endif
     return rc;
 }
-uint32_t *x4_display_pixels(X4Display *d) { return d->buffers[d->index]; }
+uint32_t *x4_display_pixels(X4Display *d)
+{return d?x4_ui_surface_pixels(d->ui):NULL;}
+void x4_display_set_damage(X4Display *d,const X4UiRect *rects,size_t count)
+{if(d)x4_ui_surface_set_damage(d->ui,rects,count);}
+void x4_display_copy_stats(const X4Display *d,X4UiCopyStats *stats)
+{if(stats)*stats=d?d->copy_stats:(X4UiCopyStats){0};}
 static int present(X4Display *d, X4Trace *trace, uint64_t generation, bool fresh)
 {
+    if(!d||d->handle<0||!d->ui||d->index<0||d->index>=X4_UI_SCANOUTS||
+        !d->buffers[d->index])return -9001;
+    uint64_t copy_begin=sceKernelGetProcessTime();
+    int copied=x4_ui_surface_publish(d->ui,d->buffers[d->index],(unsigned)d->index,&d->copy_stats);
+    d->copy_stats.elapsed_us=sceKernelGetProcessTime()-copy_begin;
+    if(copied)return copied;
     uint16_t flags = fresh ? X4_TRACE_F_NEW : X4_TRACE_F_REPEAT;
     uint64_t submitted = (uint64_t)d->frame;
     x4_trace_monitor_state(trace, X4_MON_ACTOR_DISPLAY, X4_MON_PHASE_FLIP_SUBMIT, 0);
@@ -109,6 +123,8 @@ void x4_display_close(X4Display *d)
     if (d->handle >= 0) { sceVideoOutClose(d->handle); d->handle = -1; }
     if (d->memory) { sceKernelMunmap(d->memory, d->size); d->memory = NULL; }
     if (d->allocated) { sceKernelReleaseDirectMemory(d->offset, d->size); d->allocated = 0; }
+    x4_ui_surface_destroy(d->ui);d->ui=NULL;
+    d->buffers[0]=d->buffers[1]=NULL;
 #endif
 }
 #if X4_STREAM_PROFILE
@@ -118,6 +134,7 @@ int x4_display_close_checked(X4Display *d)
     if(d->handle>=0){rc=sceVideoOutClose(d->handle);if(rc)return rc<0?rc:-1;d->handle=-1;}
     if(d->memory){rc=sceKernelMunmap(d->memory,d->size);if(rc)return rc<0?rc:-1;d->memory=NULL;}
     if(d->allocated){rc=sceKernelReleaseDirectMemory(d->offset,d->size);if(rc)return rc<0?rc:-1;d->allocated=0;}
-    d->buffers[0]=d->buffers[1]=NULL;return 0;
+    d->buffers[0]=d->buffers[1]=NULL;
+    x4_ui_surface_destroy(d->ui);d->ui=NULL;return 0;
 }
 #endif

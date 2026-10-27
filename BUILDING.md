@@ -51,7 +51,7 @@ source ~/.config/xcloud4/env.sh
 bash scripts/webrtc/build_native.sh
 ```
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [docs/licenses/](docs/licenses/) for exact upstream commit hashes, licenses, and OpenOrbis port patches (`scripts/webrtc/prepare_port.py`, `scripts/webrtc/prepare_receive_diagnostics.py`, `scripts/webrtc/prepare_receiver_nack.py`).
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [docs/licenses/](docs/licenses/) for exact upstream commit hashes, licenses, and OpenOrbis port patches (`scripts/webrtc/prepare_port.py`, `scripts/webrtc/prepare_receive_diagnostics.py`, `scripts/webrtc/prepare_receiver_nack.py`, `scripts/webrtc/prepare_rtt_api.py`).
 
 ### OpenOrbis Auxiliary SELF Modules
 
@@ -67,7 +67,7 @@ export X4_RUNTIME_MODULES="$HOME/.local/share/xcloud4/runtime/sdk-v0.5.4"
 
 Both editions are compiled and packaged from the root of this repository after loading `~/.config/xcloud4/env.sh` and setting `X4_RUNTIME_MODULES`.
 
-### A. Public Beta (`X4_PUBLIC=1` -> `dist/XCloud4-1.1.0-beta-publico.pkg`)
+### A. Public Beta (`X4_PUBLIC=1` -> `dist/XCloud4-1.2.0-beta-publico.pkg`)
 
 ```bash
 source ~/.config/xcloud4/env.sh
@@ -85,9 +85,9 @@ python3 scripts/package_identity.py verify --mode public
 ```
 
 Output package:
-- `dist/XCloud4-1.1.0-beta-publico.pkg` (`TITLE`: `XCloud4`, `TITLE_ID`: `XCLD00003`, `APP_VER`: `01.04`, icon: `assets/icon0.png`)
+- `dist/XCloud4-1.2.0-beta-publico.pkg` (`TITLE`: `XCloud4`, `TITLE_ID`: `XCLD00003`, `APP_VER`: `01.06`, icon: `assets/icon0.png`)
 
-### B. Experimental Lab (`X4_PUBLIC=0` -> `dist/XCloud4-0.7.55-lab.pkg`)
+### B. Experimental Lab (`X4_PUBLIC=0` -> `dist/XCloud4-0.7.57-lab.pkg`)
 
 ```bash
 source ~/.config/xcloud4/env.sh
@@ -105,7 +105,7 @@ python3 scripts/package_identity.py verify --mode normal --suffix=""
 ```
 
 Output package:
-- `dist/XCloud4-0.7.55-lab.pkg` (`TITLE`: `XCloud4 Lab`, `TITLE_ID`: `XCLD00001`, `APP_VER`: `01.23`, icon: `assets/icon0-lab.png`)
+- `dist/XCloud4-0.7.57-lab.pkg` (`TITLE`: `XCloud4 Lab`, `TITLE_ID`: `XCLD00001`, `APP_VER`: `01.25`, icon: `assets/icon0-lab.png`)
 
 ---
 

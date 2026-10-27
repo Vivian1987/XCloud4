@@ -872,6 +872,23 @@ static void recent_run(X4Auth *a)
     x4_xbox_work_free(w); a->xwork = NULL;
 }
 
+static void fortnite_run_wrapper(X4Auth *a)
+{
+    X4XboxWork *w = a->xwork;
+    if (!a->token_expiry || now() >= a->token_expiry) {
+        reset_catalog(a, X4_CATALOG_ERROR, X4_AUTH_E_SIGNED_OUT, "token Microsoft caducado");
+    } else {
+        const X4CatalogSnapshot *r = x4_xbox_fortnite_query(w, a->access_token, &a->cancel, catalog_progress, a);
+        if (atomic_load(&a->cancel)) {
+            reset_catalog(a, X4_CATALOG_CANCELLED, 0, "consulta cancelada");
+        } else {
+            publish_catalog(a, r);
+        }
+    }
+    x4_xbox_work_free(w);
+    a->xwork = NULL;
+}
+
 /* The Xbox credentials are reacquired inside the run and wiped by it. At
  * READY the run calls passport_provider on this same worker, which renews
  * (and may rotate) the Microsoft tokens; account and catalog views change
@@ -905,9 +922,11 @@ static void session_run(X4Auth *a)
 static void *worker(void *opaque)
 {
     X4Auth *a = opaque;
-    if (a->action == X4_AUTH_XBOX_CATALOG || a->action == X4_AUTH_XBOX_SESSION || a->action == X4_AUTH_XBOX_RECENTS) {
+    if (a->action == X4_AUTH_XBOX_CATALOG || a->action == X4_AUTH_XBOX_SESSION ||
+        a->action == X4_AUTH_XBOX_RECENTS || a->action == X4_AUTH_FORTNITE_QUERY) {
         if (a->action == X4_AUTH_XBOX_CATALOG) catalog_run(a);
         else if (a->action == X4_AUTH_XBOX_RECENTS) recent_run(a);
+        else if (a->action == X4_AUTH_FORTNITE_QUERY) fortnite_run_wrapper(a);
         else session_run(a);
         atomic_store_explicit(&a->finished, 1, memory_order_release);
         return NULL;
@@ -1050,10 +1069,38 @@ static int start_recents(X4Auth *a)
     a->running = 1; return 0;
 }
 
+static int start_fortnite(X4Auth *a)
+{
+    if (!a->token_expiry) return X4_AUTH_E_SIGNED_OUT;
+    a->xwork = x4_xbox_work_new();
+    if (!a->xwork) {
+        printf("XCloud4: Fortnite sin memoria de trabajo\n");
+        reset_catalog(a, X4_CATALOG_ERROR, X4_AUTH_E_ALLOCATION, "sin memoria para buscar Fortnite");
+        return X4_AUTH_E_ALLOCATION;
+    }
+    a->action = X4_AUTH_FORTNITE_QUERY;
+    atomic_store(&a->cancel, 0);
+    reset_catalog(a, X4_CATALOG_LOADING, 0, "buscando Fortnite en el servidor");
+    atomic_store_explicit(&a->finished, 0, memory_order_release);
+    int rc = scePthreadCreate(&a->thread, NULL, worker, a, "x4-auth");
+    if (rc != 0) {
+        if (rc > 0) rc = -rc;
+        printf("XCloud4: Fortnite crear hilo 0x%08x\n", (unsigned)rc);
+        atomic_store(&a->finished, 1);
+        x4_xbox_work_free(a->xwork);
+        a->xwork = NULL;
+        reset_catalog(a, X4_CATALOG_ERROR, rc, "no se pudo iniciar la consulta");
+        return rc;
+    }
+    a->running = 1;
+    return 0;
+}
+
 int x4_auth_start(X4Auth *a, enum X4AuthAction action)
 {
     if (!a || (action != X4_AUTH_SIGN_IN && action != X4_AUTH_CHECK_CONNECTION &&
-        action != X4_AUTH_XBOX_CATALOG && action != X4_AUTH_XBOX_RECENTS)) return X4_AUTH_E_ARGUMENT;
+        action != X4_AUTH_XBOX_CATALOG && action != X4_AUTH_XBOX_RECENTS &&
+        action != X4_AUTH_FORTNITE_QUERY)) return X4_AUTH_E_ARGUMENT;
     if (x4_auth_busy(a)) return X4_AUTH_E_BUSY;
     int rc = join_worker(a);
     if (rc) return rc;
@@ -1063,6 +1110,7 @@ int x4_auth_start(X4Auth *a, enum X4AuthAction action)
     if (action == X4_AUTH_CHECK_CONNECTION && a->token_expiry) return X4_AUTH_E_AUTHORIZED;
     if (action == X4_AUTH_XBOX_CATALOG) return start_catalog(a);
     if (action == X4_AUTH_XBOX_RECENTS) return start_recents(a);
+    if (action == X4_AUTH_FORTNITE_QUERY) return start_fortnite(a);
     /* A fresh sign-in deliberately discards the previous token, catalog and
      * session view; no worker runs here, so no cleanup is pending. */
     if (action == X4_AUTH_SIGN_IN) {

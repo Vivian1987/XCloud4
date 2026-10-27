@@ -221,11 +221,13 @@ static int metadata_normalize(const X4ProductMetadata *in,const char *id,X4Produ
         !utf8_display(in->description,sizeof(in->description)))return 0;
     size_t n=0;while(n<sizeof(in->cover_url)&&in->cover_url[n])++n;
     if(n==sizeof(in->cover_url)||(n&&!x4_http_public_image_url(in->cover_url)))return 0;
+    size_t hn=0;while(hn<sizeof(in->hero_url)&&in->hero_url[hn])++hn;
+    if(hn==sizeof(in->hero_url)||(hn&&!x4_http_public_image_url(in->hero_url)))return 0;
     memset(out,0,sizeof(*out));
     memcpy(out->product_id,id,strlen(id)+1);
 #define COPY_FIELD(f) memcpy(out->f,in->f,strlen(in->f)+1)
     COPY_FIELD(name);COPY_FIELD(publisher);COPY_FIELD(developer);COPY_FIELD(category);
-    COPY_FIELD(description);COPY_FIELD(cover_url);
+    COPY_FIELD(description);COPY_FIELD(cover_url);COPY_FIELD(hero_url);
 #undef COPY_FIELD
     return 1;
 }

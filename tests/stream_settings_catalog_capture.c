@@ -13,6 +13,7 @@ int x4_catalog_assets_acquire(X4CatalogAssets *a,const char *id,X4CatalogAssetVi
 { (void)a;(void)id;(void)out;return 0; }
 void x4_catalog_assets_release(X4CatalogAssets *a,X4CatalogAssetView *view)
 { (void)a;(void)view; }
+bool x4_server_settings_awaiting_first_choice(void) { return false; }
 static void capture(const char *dir,const char *name,const uint32_t *pixels)
 {
     if(!dir)return;

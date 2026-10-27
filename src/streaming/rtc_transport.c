@@ -84,6 +84,8 @@ struct X4Rtc {
     X4KeyframeLimiter *keyframe_limiter;
     uint64_t keyframe_grant_consumed; /* session owner only, before any I/O */
 #endif
+    uint32_t sdp_video_ssrc, sdp_video_pt;
+    char sdp_video_mid[32];
 };
 
 static void lock(atomic_flag *flag) { while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {} }
@@ -317,10 +319,11 @@ static void sdp_shape_log(const char *sdp, size_t length)
 
 /* Rare, bounded numeric session metadata. The original SDP stays in memory;
  * credentials, candidates, fingerprints, names and opaque text are excluded. */
-static void sdp_receive_shape(const char *sdp, size_t length, unsigned scope)
+static void sdp_receive_shape(X4Rtc *rtc, const char *sdp, size_t length, unsigned scope)
 {
     unsigned media = 0, records = 0;
     bool have_media = false;
+    bool is_video = false;
     printf("XCloud4: SDP receive scope=%u (0=offer,1=accepted answer)\n", scope);
     for (size_t offset = 0; offset < length;) {
         size_t end = offset;
@@ -332,9 +335,36 @@ static void sdp_receive_shape(const char *sdp, size_t length, unsigned scope)
         if (sdp_prefix(line, "m=")) {
             if (have_media) ++media;
             have_media = true;
+            is_video = sdp_prefix(line, "m=video");
             continue;
         }
         if (!have_media || media >= 8 || records >= 128) continue;
+        if (is_video && rtc && scope == 1) {
+            if (sdp_prefix(line, "a=mid:")) {
+                SdpSpan mid_span = sdp_after(line, 6);
+                size_t n = mid_span.n < sizeof(rtc->sdp_video_mid) - 1 ? mid_span.n : sizeof(rtc->sdp_video_mid) - 1;
+                memcpy(rtc->sdp_video_mid, mid_span.p, n);
+                rtc->sdp_video_mid[n] = '\0';
+            } else if (sdp_prefix(line, "a=rtpmap:")) {
+                SdpSpan rest = sdp_after(line, 9), type = sdp_token(&rest), codec = sdp_token(&rest);
+                unsigned pt = 0;
+                if (sdp_number(type, 127, &pt) && sdp_equal(codec, "H264/90000")) {
+                    rtc->sdp_video_pt = pt;
+                }
+            } else if (sdp_prefix(line, "a=ssrc:")) {
+                SdpSpan rest = sdp_after(line, 7);
+                uint64_t val = 0;
+                size_t i = 0;
+                while (i < rest.n && rest.p[i] >= '0' && rest.p[i] <= '9') {
+                    val = val * 10 + (rest.p[i] - '0');
+                    ++i;
+                }
+                if (val && !rtc->sdp_video_ssrc) {
+                    rtc->sdp_video_ssrc = (uint32_t)val;
+                    x4_rtc_receive_diag_set_expected_video(rtc->sdp_video_ssrc, rtc->sdp_video_pt ? rtc->sdp_video_pt : 102, rtc->sdp_video_mid);
+                }
+            }
+        }
         uint64_t key = ((uint64_t)scope << 32) | ((uint64_t)media << 16);
         unsigned pt, number;
         if (sdp_prefix(line, "a=rtpmap:")) {
@@ -962,6 +992,7 @@ X4Rtc *x4_rtc_open(int *error)
 #endif
     rtc->pc = rtc->video = rtc->audio = -1;
     rtc->started_at = sceKernelGetProcessTime();
+    x4_rtc_receive_diag_reset();
     for (unsigned i=0;i<4;++i) rtc->channels[i]=-1;
     atomic_init(&rtc->state, X4_RTC_NEW);
     atomic_init(&rtc->error, 0);
@@ -1183,7 +1214,7 @@ int x4_rtc_local_description(X4Rtc *rtc,char *sdp,size_t capacity)
             offer_bandwidth.first_as_kbps,offer_bandwidth.malformed_as_lines);
 #endif
         sdp_shape_log(sdp,(size_t)rc-1);
-        sdp_receive_shape(sdp,(size_t)rc-1,0);
+        sdp_receive_shape(rtc,sdp,(size_t)rc-1,0);
     }
     return 1;
 }
@@ -1218,7 +1249,7 @@ int x4_rtc_set_remote_description(X4Rtc *rtc,const char *sdp)
 #endif
     if(rc<0) fail(rtc,rc);
     else {
-        sdp_receive_shape(sdp,strlen(sdp),1);
+        sdp_receive_shape(rtc,sdp,strlen(sdp),1);
         int nack_rc = x4_rtc_receiver_nack_accept(rtc->video, rtc->pc);
         /* The experiment must not turn an unavailable feedback observation
          * into a media-session failure, especially in the OFF reference.
@@ -1239,6 +1270,37 @@ int x4_rtc_add_remote_candidate(X4Rtc *rtc,const char *candidate,const char *mid
 {
     if(!rtc||!candidate||!mid||strnlen(candidate,CANDIDATE_CAP)>=CANDIDATE_CAP||strnlen(mid,MID_CAP)>=MID_CAP)return -1;
     int rc=rtcAddRemoteCandidate(rtc->pc,candidate,mid);if(rc<0)fail(rtc,rc);return rc;
+}
+int x4_rtc_get_selected_candidate_pair(X4Rtc *rtc, char *local, size_t local_cap, char *remote, size_t remote_cap)
+{
+    if (!rtc || rtc->pc < 0) return -1;
+#if !defined(_WIN32)
+    return rtcGetSelectedCandidatePair(rtc->pc, local, (int)local_cap, remote, (int)remote_cap);
+#else
+    (void)local; (void)local_cap; (void)remote; (void)remote_cap;
+    return -1;
+#endif
+}
+int x4_rtc_get_rtt_ms(X4Rtc *rtc)
+{
+    if (!rtc || rtc->pc < 0) return -1;
+#if !defined(_WIN32)
+    int rtt = rtcGetRtt(rtc->pc);
+    return rtt >= 0 ? rtt : -1;
+#else
+    return -1;
+#endif
+}
+void x4_rtc_get_sdp_video(const X4Rtc *rtc,uint32_t *ssrc,uint32_t *pt,char *mid,size_t mid_cap)
+{
+    if(ssrc)*ssrc=rtc?rtc->sdp_video_ssrc:0;
+    if(pt)*pt=rtc?rtc->sdp_video_pt:0;
+    if(mid&&mid_cap){
+        if(rtc&&rtc->sdp_video_mid[0]){
+            strncpy(mid,rtc->sdp_video_mid,mid_cap-1);
+            mid[mid_cap-1]='\0';
+        }else mid[0]='\0';
+    }
 }
 void x4_rtc_snapshot(X4Rtc *rtc,X4RtcSnapshot *snapshot)
 {

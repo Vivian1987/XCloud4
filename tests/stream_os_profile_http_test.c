@@ -4,6 +4,7 @@
  * process; fixture credentials are not captured or printed. */
 #define _POSIX_C_SOURCE 200809L
 #include "../src/auth/xbox_live.c"
+#include "../src/auth/ca_bundle.h"
 
 static unsigned checks;
 #define CHECK(x) do { ++checks; if (!(x)) { fprintf(stderr, "osName HTTP check failed at %d: %s\n", __LINE__, #x); abort(); } } while (0)
@@ -100,6 +101,23 @@ static int32_t native_pool(const char *name, int32_t bytes, int32_t flags)
 static int32_t native_pool_destroy(int32_t id) { CHECK(id == 51); return 0; }
 static int32_t native_ssl(size_t bytes) { CHECK(bytes == 512 * 1024); return 52; }
 static int32_t native_ssl_term(int32_t id) { CHECK(id == 52); return 0; }
+/* Baseline HTTP now loads the real bundled CA before requests. Simulate only
+ * that native ABI; the certificates and descriptor layout stay production. */
+static int32_t native_load_cert(int32_t http,int32_t count,void *list,void *cert,void *key)
+{
+    size_t actual_count=0;
+    const SslPem * const *actual=x4_ca_bundle_get_ssl_pem_ptrs(&actual_count);
+    CHECK(actual_count==X4_CA_BUNDLE_COUNT&&actual_count==11&&x4_ca_bundle_rsa_count()==7);
+    CHECK(http==53&&count==(int32_t)actual_count&&list==(void *)actual&&!cert&&!key);
+    for(size_t i=0;i<actual_count;++i){
+        CHECK(actual[i]&&actual[i]->ptr&&actual[i]->size>100);
+        const X4CaCertEntry *entry=x4_ca_bundle_entry(i);
+        CHECK(entry&&actual[i]->ptr==entry->pem_data&&actual[i]->size==entry->pem_size);
+        CHECK(!strncmp(actual[i]->ptr,"-----BEGIN CERTIFICATE-----",27));
+    }
+    return 0;
+}
+
 static int32_t native_http(int32_t net, int32_t ssl, size_t bytes)
 { CHECK(net == 51 && ssl == 52 && bytes == 512 * 1024); return 53; }
 static int32_t native_http_term(int32_t id)
@@ -236,6 +254,7 @@ int x4_module_symbol(int handle, const char *name, void **address)
     SYMBOL("sceHttpSetCookieEnabled", native_cookie)
     SYMBOL("sceHttpAddRequestHeader", native_header)
     SYMBOL("sceHttpsEnableOption", native_tls)
+    SYMBOL("sceHttpsLoadCert", native_load_cert)
     SYMBOL("sceHttpSendRequest", native_send)
     SYMBOL("sceHttpReadData", native_read)
     SYMBOL("sceHttpGetStatusCode", native_status)
@@ -351,9 +370,11 @@ static void run_real_constructors(void)
 }
 int main(void)
 {
+    const char *settings_path=getenv("X4_SESSION_FIXTURE_SETTINGS_PATH");
+    x4_server_settings_set_path(settings_path?settings_path:"/nonexistent-tarea20c-host/server-settings.bin");
     CHECK(!strcmp(X4_STREAM_OS,expected_os));
 #if X4_STREAM_PROFILE
-    CHECK(x4_stream_settings_get().profile==X4_REQUEST_720P_HQ);
+    CHECK(x4_stream_settings_get().profile==X4_REQUEST_1080P_G);
     for(runtime_profile=0;runtime_profile<X4_REQUEST_PROFILE_COUNT;++runtime_profile) {
         memset(route_calls,0,sizeof(route_calls));memset(resource,0,sizeof(resource));
         public_device_headers=templates=terminated=next_resource=0;

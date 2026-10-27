@@ -4,126 +4,162 @@
   <img src="assets/icon0.png" alt="XCloud4 icon" width="160" height="160">
 </p>
 
+**XCloud4** es un cliente nativo e independiente de Xbox Cloud Gaming para consolas PlayStation 4 con GoldHEN, compilado con OpenOrbis PS4 Toolchain.  
 **XCloud4** is an independent, native Xbox Cloud Gaming client for PlayStation 4 consoles running GoldHEN, built with the open-source OpenOrbis PS4 Toolchain.
 
-> **Mission:** Helping more people play next-gen games without buying a new console.
+> **Misión / Mission:** Que más personas puedan jugar títulos de nueva generación sin comprar una consola nueva. / Helping more people play next-gen games without buying a new console.
 
 ---
 
-## Requirements
+## Aviso / Disclaimer
 
-- **Console:** PlayStation 4 running **GoldHEN** (tested on an original PS4 Fat with firmware **12.00** and **GoldHEN v2.4b18.7**).
-- **Subscription:** An Xbox Game Pass plan that includes cloud gaming (PC Game Pass does not).
-- **Network:** A stable internet connection of at least **15 Mbps**, preferably with the PS4 connected by wired Ethernet.
+**Aviso:** XCloud4 es un proyecto independiente, sin afiliación con Microsoft, Xbox ni Sony. Se ofrece tal cual, sin garantías. Lo usas bajo tu propia responsabilidad: el proyecto no se hace responsable de problemas con tu consola, tu cuenta o tus suscripciones. Usa XCloud4 respetando los términos de servicio de Microsoft y Xbox.
+
+**Disclaimer:** XCloud4 is an independent project, not affiliated with Microsoft, Xbox or Sony. It is provided as is, without warranty. You use it at your own risk: the project is not responsible for problems with your console, account or subscriptions. Use XCloud4 in accordance with Microsoft and Xbox terms of service.
 
 ---
 
-## Editions
+## Novedades de la 1.2.0 / What's New in 1.2.0
 
-Both editions are built from this exact source tree (`X4_PUBLIC=1` and `X4_PUBLIC=0`) and use separate PS4 Title IDs and icons so they can be installed side by side on the same console:
+### Español
+- **Nueva interfaz, más rápida:** diseño oscuro renovado en todas las pantallas (menú principal, catálogo, búsqueda, Fortnite, Ajustes, Cuenta, Acerca de y Apoyo), menú de partida nuevo y pantalla de carga con un cohete animado.
+- **Fila de Xbox:** si los servidores de Xbox están llenos, XCloud4 muestra que estás en la fila, el tiempo de espera y, si Xbox la da, una estimación. Espera hasta 15 minutos y puedes cancelar con CÍRCULO.
+- **Menú OPTIONS con calidad y servidor:** pestañas **Imagen** (`1080p Alta`, `1080p` y `720p`) y **Servidor** (navegables con `L1`/`R1`).
+- **Selector de servidor con ms reales de la última partida:** elige entre los servidores que Xbox ofrece a tu cuenta; tras jugar una partida en un servidor, XCloud4 guarda y muestra los ms reales medidos durante la sesión.
+- **Botón Fortnite para cuentas sin Game Pass, con elección de calidad:** acceso directo desde el menú principal para jugar Fortnite gratis con una cuenta gratuita de Microsoft (con perfil de Xbox), eligiendo calidad y servidor antes de iniciar.
+- **Imagen más nítida:** reconstrucción de color suave, escalado bilineal limpio de 720p a 1080p y realce de nitidez ligero.
+- **Espera de hasta 30 s del primer vídeo con aviso de progreso:** mayor margen cuando Xbox tarda en iniciar el envío de vídeo.
+- **Certificados propios para firmwares antiguos (sin confirmar en 5.05):** incluye raíces TLS actuales (DigiCert, Microsoft, USERTrust y Sectigo) para consolas con lista del sistema desactualizada (`0x8095F00C`).
+- **Mensajes claros de cuenta, red y disponibilidad:** avisos traducidos para errores de perfil o región de Xbox, fallos de DNS/red y disponibilidad de Xbox Cloud Gaming.
 
-| Edition | Package | PS4 Menu Title | Title ID | Target Audience |
+### English
+- **New, faster interface:** refreshed dark design on every screen (main menu, catalog, search, Fortnite, Settings, Account, About and Support), a new in-game menu and a loading screen with an animated rocket.
+- **Xbox queue:** when Xbox servers are full, XCloud4 shows that you're in line, how long you've waited and, when Xbox provides one, an estimate. It waits up to 15 minutes and you can cancel with CIRCLE.
+- **OPTIONS menu with picture quality and server:** **Picture** (`1080p High`, `1080p`, and `720p`) and **Server** tabs (switchable with `L1`/`R1`).
+- **Server selector with real ms from the last game:** pick from the servers Xbox offers your account; after playing a session on a server, XCloud4 saves and displays the real RTT in ms measured during gameplay.
+- **Fortnite button for accounts without Game Pass, with quality selection:** direct main-menu card to play Fortnite free with a free Microsoft account (with an Xbox profile), selecting picture quality and server before launching.
+- **Sharper image:** smooth chroma reconstruction, clean 720p-to-1080p scaling, and light luma sharpening.
+- **Up to 30 s wait for first video with progress notice:** tolerates slower cloud session video startups while showing elapsed progress.
+- **Bundled root certificates for older firmwares (unconfirmed on 5.05):** includes current TLS root CAs (DigiCert, Microsoft, USERTrust, and Sectigo) for consoles with outdated system trust stores (`0x8095F00C`).
+- **Clear account, network, and availability messages:** actionable notices for Xbox profile/region status, DNS/timeout issues, and Xbox Cloud Gaming availability.
+
+---
+
+## Requisitos / Requirements
+
+### Español
+- **Consola:** PS4 con **GoldHEN**.
+  - **Probado en:** PS4 Fat, firmware 12.00, GoldHEN v2.4b18.7. Si la usas en otro modelo o firmware, cuéntanos en un issue si funciona.
+- **Cuenta / Suscripción:** Game Pass con juego en la nube (PC Game Pass no lo incluye), o una cuenta gratuita de Microsoft con perfil de Xbox para Fortnite.
+- **Red:** Conexión estable de **15 Mbps o más** (mejor por cable Ethernet).
+
+### English
+- **Console:** PlayStation 4 running **GoldHEN**.
+  - **Tested on:** PS4 Fat, firmware 12.00, GoldHEN v2.4b18.7. If you use it on another model or firmware, let us know in an issue whether it works.
+- **Account / Subscription:** An Xbox Game Pass plan that includes cloud gaming (PC Game Pass does not), or a free Microsoft account with an Xbox profile for Fortnite.
+- **Network:** A stable internet connection of **15 Mbps or more** (wired Ethernet recommended).
+
+---
+
+## Ediciones / Editions
+
+Ambas ediciones se compilan desde este mismo árbol de código (`X4_PUBLIC=1` y `X4_PUBLIC=0`) y usan Title IDs e iconos distintos para poder instalarse a la vez en la misma consola:
+
+| Edición / Edition | Paquete / Package | Título en PS4 | Title ID | Público objetivo / Target Audience |
 |---|---|---|---|---|
-| **Public Beta** | `XCloud4-1.1.0-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Everyday players: streamlined 1080p60 streaming, low-latency presentation, Microsoft sign-in with an on-screen code and QR, DualShock 4 rumble, and automatic Spanish/English UI. |
-| **Experimental Lab** | `XCloud4-0.7.55-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Advanced testers: adds 720p and 1080p request profiles, the `R3` technical settings menu, and per-session `/data` diagnostic logs. |
+| **Public Beta** | `XCloud4-1.2.0-beta-publico.pkg` | `XCloud4` | `XCLD00003` | Jugadores: menú OPTIONS de calidad (`1080p Alta`, `1080p`, `720p`) y servidor con ms reales, botón directo a Fortnite, presentación sin VSync de baja latencia, inicio de sesión con código y QR, vibración DualShock 4 e interfaz automática en español/inglés. |
+| **Experimental Lab** | `XCloud4-0.7.57-lab.pkg` | `XCloud4 Lab` | `XCLD00001` | Pruebas avanzadas: añade el panel técnico `R3` y registros diagnósticos por sesión en `/data/xcloud4/`. |
 
-See [RELEASE_NOTES_1.1.0-beta.md](RELEASE_NOTES_1.1.0-beta.md) and [RELEASE_NOTES_lab-0.7.55.md](RELEASE_NOTES_lab-0.7.55.md) for full details on each package.
-
----
-
-## Installation
-
-1. Download `XCloud4-1.1.0-beta-publico.pkg` (or `XCloud4-0.7.55-lab.pkg` for the experimental lab edition).
-2. Copy the `.pkg` file to your PS4 using either:
-   - A **USB drive** (FAT32 or exFAT) placed in the root directory, or
-   - The **GoldHEN FTP server** into `/data/pkg/`.
-3. On the PS4, open **GoldHEN > Debug Settings > Package Installer** and install the package.
-4. Launch **XCloud4** from the PS4 home screen and sign in on your phone or PC at the address shown on screen (usually `microsoft.com/link`) using the on-screen code.
+Consulta [RELEASE_NOTES_1.2.0-beta.md](RELEASE_NOTES_1.2.0-beta.md) y [RELEASE_NOTES_lab-0.7.57.md](RELEASE_NOTES_lab-0.7.57.md) para más detalles.
 
 ---
 
-## Controls
+## Instalación / Installation
 
-### In-Game Menu (while streaming)
-
-To prevent conflicts with in-game button combinations (such as Power Shots in EA Sports FC), all legacy `L1 + R1` shortcuts have been replaced with a dedicated in-game touch menu:
-
-| Control | Action |
-|---|---|
-| **Hold two fingers on Touchpad for 1 s** | Open the in-game menu |
-| **D-Pad Up / Down** | Navigate menu options |
-| **CROSS (X)** | Select / confirm highlighted option |
-| **CIRCLE** | Close menu and return to game |
-| **Auto-close** | Closes automatically after 15 seconds of inactivity |
-
-#### In-Game Menu Options
-- **Return to catalog:** Disconnect the cloud session and return to the game catalog.
-- **Mute / Unmute audio:** Toggle game stream sound.
-- **Xbox button:** Send the **Xbox Guide / Nexus** button to the cloud console (~200 ms pulse).
-- **Cancel:** Close the menu and resume play.
-- *(Lab only)* **Mark test:** Toggle diagnostic epoch/marker in session traces.
-- *(Lab only)* **Exit app:** Perform safe application shutdown.
-
-### Xbox Controller Mapping
-
-| PS4 Button | Xbox Equivalent |
-|---|---|
-| **Touchpad click** | **Xbox View** (Change view / Back) |
-| **OPTIONS** | **Xbox Menu** (Start) |
-| **D-Pad, Sticks, Triggers, Face buttons** | Mapped 1:1 to Xbox controller buttons and axes |
-
-> [!NOTE]
-> While the in-game menu is open, the game receives neutral controller input so your menu navigation does not affect the game. Game video and audio continue streaming in the background.
-
-### Exiting the Application
-
-- To close **XCloud4** at any time: press the **PS button** and select **Close Application** (`PS button > Close Application`).
-- *(In the Experimental Lab edition only, pressing `OPTIONS` in the main menu or catalog, or choosing `Exit app` in the in-game menu, also initiates a clean exit.)*
+1. Descarga `XCloud4-1.2.0-beta-publico.pkg` (o `XCloud4-0.7.57-lab.pkg` para la edición de laboratorio).
+2. Copia el archivo `.pkg` a tu PS4 mediante:
+   - Una **memoria USB** (FAT32 o exFAT) en la raíz, o
+   - El servidor **FTP de GoldHEN** en `/data/pkg/`.
+3. En la PS4, abre **GoldHEN > Debug Settings > Package Installer** e instala el paquete.
+4. Abre **XCloud4** desde el menú de la PS4 e inicia sesión desde tu teléfono o PC con el código o QR en pantalla (`microsoft.com/link`).
 
 ---
 
-## Automatic Language and Region
+## Controles / Controls
 
-XCloud4 automatically detects your PS4 system language at startup via `sceSystemServiceParamGetInt(ORBIS_SYSTEM_SERVICE_PARAM_ID_LANG)`:
+### En los menús y el catálogo / Outside of Game
 
-- **User interface language:** **Spanish** if the console is set to Spanish (Spain or Latin America); **English** for all other console language settings.
-- **Catalog and cloud region:** Store metadata, cover art, and cloud session locale/market parameters automatically follow your console language (`es-ES`/`ES`, `es-MX`/`MX`, `en-US`/`US`, `en-GB`/`GB`, `pt-BR`/`BR`, `pt-PT`/`PT`, `fr-FR`/`FR`, `fr-CA`/`CA`, `de-DE`/`DE`, `it-IT`/`IT`, defaulting to `en-US`/`US`).
+| Control | Acción (ES) | Action (EN) |
+|---|---|---|
+| **OPTIONS** | Abre Ajustes (**Imagen** y **Servidor**) | Opens Settings (**Picture** and **Server**) |
+| **L1 / R1** | Cambia entre las pestañas **Imagen** y **Servidor** | Switches between **Picture** and **Server** tabs |
+| **Arriba / Abajo** | Elige calidad (`1080p Alta`, `1080p`, `720p`) o servidor | Selects quality (`1080p High`, `1080p`, `720p`) or server |
+| **X (Cruz)** | Guarda la elección y cierra el panel | Saves selection and closes panel |
+| **CÍRCULO** | Cancela sin guardar y cierra | Cancels without saving and closes |
 
----
+Los ajustes de imagen se guardan en `/data/xcloud4/settings-public-v1.bin` y la elección de servidor (junto con los ms de la última partida) en `/data/xcloud4/server-v1.bin`.
 
-## Mission and Support
+### En el juego (mientras juegas en la nube) / In-Game Menu
 
-XCloud4 is built with a single goal: **helping more people play next-gen games without buying a new console**.
+| Control | Acción (ES) | Action (EN) |
+|---|---|---|
+| **Dos dedos 1 s en el touchpad** | Abre el menú del juego | Opens the in-game menu |
+| **Arriba / Abajo** | Navega por las opciones (`Volver al catálogo`, `Silenciar/Activar sonido`, `Botón Xbox`, `Cancelar`) | Navigates menu options (`Return to catalog`, `Mute/Unmute audio`, `Xbox button`, `Cancel`) |
+| **X (Cruz)** | Confirma la opción elegida | Confirms highlighted option |
+| **CÍRCULO** | Cierra el menú y vuelve al juego | Closes menu and returns to game |
+| **Click del touchpad** | Botón **Vista** de Xbox | **Xbox View** button |
+| **OPTIONS** | Botón **Menú** (Start) de Xbox | **Xbox Menu** (Start) button |
 
-If this project is useful to you and you would like to support its independent development, voluntary donations are welcome on Ko-fi:
+### Salir de la aplicación / Exiting the Application
 
-- **Ko-fi:** [https://ko-fi.com/asapedgr](https://ko-fi.com/asapedgr)
-
-Voluntary donations support development only and **do not grant access to any games, accounts, or subscriptions**.
-
----
-
-## Transparency Note on Microsoft Sign-In
-
-To authenticate with Xbox Cloud Gaming, XCloud4 uses the standard Microsoft OAuth 2.0 device-code flow at the address shown on screen (usually `microsoft.com/link`). When the project tested its own application registration, the streaming authorization step (Passport) rejected it with `invalid_scope`; for that reason, XCloud4 uses the public client identifier (`1f907974-e22b-4810-a9de-d9647380c97e`) that is also used by other open-source Xbox Cloud Gaming clients (such as GreenVita).
-
-- Public device-code clients use **no client secret**.
-- Your Microsoft password is entered **only** on Microsoft's official verification page in your own browser, never inside XCloud4.
-- Access and refresh tokens are held **only in PS4 RAM** while the application is running and are never written to disk or shared externally.
-
-### Privacy and Update Notifications
-
-XCloud4 consulta una vez al arrancar la API pública de GitHub Releases para avisar de versiones nuevas; XCloud4 no envía datos de tu cuenta ni datos personales; GitHub solo ve la conexión, como con cualquier web. (XCloud4 queries the public GitHub Releases API once at startup to notify users of new versions. It sends no account or personal data; GitHub only sees the connection, as with any website.)
+- Para salir en cualquier momento: **botón PS > Cerrar aplicación** (`PS button > Close Application`).
 
 ---
 
-## Non-Affiliation Notice
+## ¿Por qué no me funciona? / Troubleshooting
 
-XCloud4 is an independent, community-developed open-source project. It is **not affiliated with, authorized by, endorsed by, or in any way officially connected with Microsoft Corporation, Xbox, Sony Interactive Entertainment, or any of their subsidiaries or affiliates**. All product and company names are trademarks or registered trademarks of their respective holders.
+> **Recordatorio / Reminder:** Consulta el [Aviso / Disclaimer](#aviso--disclaimer) al inicio de este documento.  
+> **XCloud4 no se salta restricciones de región: la app solo usa lo que Xbox permite a tu cuenta.**  
+> **XCloud4 does not bypass regional restrictions: the app only uses what Xbox allows for your account.**
+
+### Español
+- **"Tu cuenta aún no tiene perfil de Xbox":** entra una vez en [xbox.com](https://www.xbox.com) con esa cuenta de Microsoft para crear tu perfil (gamertag) y vuelve a iniciar sesión en XCloud4.
+- **Errores de DNS (`0x804101DC`–`0x804101EF`, `0x80410140`, `0x80410141`):** en la PS4 ve a **Ajustes > Red > Configurar conexión a Internet** y configura un DNS manual fiable (por ejemplo `1.1.1.1` / `8.8.8.8`).
+- **"Xbox no envió imagen":** puede ser un fallo temporal de Xbox con ese juego o servidor; vuelve a intentarlo o prueba otro servidor en **OPTIONS > Servidor**.
+- **"Los servidores de Xbox están llenos. Estás en la fila…":** Xbox no tiene un servidor libre para ese juego en este momento (pasa a menudo con Fortnite en horas de mucha gente). Espera o cancela con CÍRCULO y vuelve a intentarlo.
+- **"Xbox no tiene servidores libres ahora":** la fila superó los 15 minutos. Prueba en unos minutos o elige otro servidor en **OPTIONS > Servidor**.
+- **País sin Xbox Cloud Gaming (`HTTP 403` o región no soportada):** comprueba la lista oficial de países y regiones con Xbox Cloud Gaming en la página de Microsoft: [https://www.xbox.com/regions](https://www.xbox.com/regions).
+
+### English
+- **"Your account doesn't have an Xbox profile yet":** sign in once at [xbox.com](https://www.xbox.com) with that Microsoft account to create your Xbox profile (gamertag), then sign in again in XCloud4.
+- **DNS errors (`0x804101DC`–`0x804101EF`, `0x80410140`, `0x80410141`):** on your PS4, open **Settings > Network > Set Up Internet Connection** and set a working manual DNS (such as `1.1.1.1` / `8.8.8.8`).
+- **"Xbox didn't send any video":** this may be a temporary Xbox issue with that game or server; try again or pick another server in **OPTIONS > Server**.
+- **"Xbox servers are busy. You're in line…":** Xbox has no free server for that game right now (common with Fortnite at peak hours). Wait, or cancel with CIRCLE and try again.
+- **"Xbox has no free servers right now":** the queue went past 15 minutes. Try again in a few minutes or choose another server in **OPTIONS > Server**.
+- **Country without Xbox Cloud Gaming (`HTTP 403` or unsupported region):** check Microsoft's official list of supported countries and regions at [https://www.xbox.com/regions](https://www.xbox.com/regions).
+
+¿Tu país no tiene Xbox Cloud Gaming? Lee [docs/region-es.md](docs/region-es.md)  
+Your country doesn't have Xbox Cloud Gaming? Read [docs/region-en.md](docs/region-en.md)
 
 ---
 
-## Building and License
+## Idioma y región automáticos / Automatic Language and Region
 
-- Build instructions for reproducing both packages from source are documented in [BUILDING.md](BUILDING.md).
-- XCloud4 is free software distributed under the **GNU General Public License v3.0 only (`GPL-3.0-only`)**. See [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [docs/licenses/](docs/licenses/) for complete license terms and third-party attributions.
+XCloud4 detecta el idioma del sistema de la PS4 al arrancar mediante `sceSystemServiceParamGetInt(ORBIS_SYSTEM_SERVICE_PARAM_ID_LANG)`:
+- **Idioma de la interfaz:** **Español** si la consola está en español (España o América Latina); **Inglés** en cualquier otro idioma.
+- **Región de tienda y sesión:** los textos y carátulas del catálogo siguen el idioma configurado en la consola (`es-ES`/`ES`, `es-MX`/`MX`, `en-US`/`US`, `en-GB`/`GB`, `pt-BR`/`BR`, `pt-PT`/`PT`, `fr-FR`/`FR`, `fr-CA`/`CA`, `de-DE`/`DE`, `it-IT`/`IT`, con respaldo en `en-US`/`US`).
+
+---
+
+## Misión, transparencia y apoyo / Mission, Transparency, and Support
+
+- **Apoya el proyecto / Support:** Si XCloud4 te resulta útil, puedes apoyar su desarrollo con una donación voluntaria en [https://ko-fi.com/asapedgr](https://ko-fi.com/asapedgr). Las donaciones no dan acceso a juegos ni a servicios de Xbox.
+- **Inicio de sesión con Microsoft / Microsoft Sign-In:** XCloud4 utiliza el flujo estándar OAuth 2.0 de código de dispositivo de Microsoft (`microsoft.com/link`) con el identificador público de cliente (`1f907974-e22b-4810-a9de-d9647380c97e`) empleado por clientes abiertos como GreenVita. Tu contraseña solo se introduce en la web oficial de Microsoft y los tokens permanecen únicamente en la memoria RAM de la PS4 mientras la aplicación está abierta.
+- **Aviso de versiones / Update Check:** XCloud4 consulta una vez al arrancar la API pública de GitHub Releases para avisar de versiones nuevas; no envía datos de tu cuenta ni datos personales.
+
+---
+
+## Compilación y licencia / Building and License
+
+- Las instrucciones para compilar ambos paquetes desde el código fuente están en [BUILDING.md](BUILDING.md).
+- XCloud4 es software libre distribuido bajo la licencia **GNU General Public License v3.0 only (`GPL-3.0-only`)**. Consulta [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) y [docs/licenses/](docs/licenses/).

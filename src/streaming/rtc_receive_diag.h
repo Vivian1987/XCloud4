@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "nack_sequence.h"
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,26 @@ uint64_t x4_rtc_receive_packet(unsigned stage, const void *packet, size_t bytes,
     uint64_t preceding_time, uint32_t flags);
 void x4_rtc_receive_reject(unsigned stage, unsigned reason, int result,
     const void *packet, size_t bytes);
+typedef struct {
+    uint32_t ssrc;
+    uint32_t payload_type;
+    uint64_t packets;
+    uint64_t first_us;
+    uint64_t last_us;
+} X4InboundRtpStream;
+typedef struct {
+    uint64_t srtp_decrypt_failures;
+    uint64_t unknown_ssrc_packets;
+    uint64_t unknown_pt_packets;
+    uint32_t sdp_video_ssrc;
+    uint32_t sdp_video_pt;
+    char sdp_video_mid[32];
+    unsigned stream_count;
+    X4InboundRtpStream streams[16];
+} X4InboundRtpSummary;
+void x4_rtc_receive_diag_reset(void);
+void x4_rtc_receive_diag_summary(X4InboundRtpSummary *out);
+void x4_rtc_receive_diag_set_expected_video(uint32_t ssrc, uint32_t pt, const char *mid);
 /* Rare numeric configuration/correspondence records, never SDP or payloads. */
 void x4_rtc_receive_setting(unsigned setting, uint64_t a, uint64_t b, uint64_t c);
 /* Explicit XCloud4 vendor extension, NOT an upstream libdatachannel API.
@@ -129,6 +150,43 @@ typedef struct {
  * confirm it before any binding change. A transition never renews deadlines.
  */
 bool x4_rtc_nack_grace_control(const X4NackGraceControl *control);
+
+typedef struct {
+    char ip[48];
+    uint16_t port;
+    char type[16];
+    char mid[16];
+    char transport[8];
+} X4RemoteIceCandidate;
+
+typedef struct {
+    unsigned remote_candidate_count;
+    X4RemoteIceCandidate remote_candidates[32];
+    char selected_local[160];
+    char selected_remote[160];
+    char game_server_ip[48];
+    uint16_t game_server_port;
+    bool has_selected_pair;
+} X4IceConnectionSummary;
+
+void x4_rtc_diag_record_remote_candidate(const char *cand_str, const char *mid);
+void x4_rtc_diag_record_selected_pair(const char *local, const char *remote);
+void x4_rtc_diag_get_ice_summary(X4IceConnectionSummary *out);
+void x4_rtc_diag_write_ice_json(FILE *f);
+
+#define X4_RTT_MAX_SAMPLES 600
+
+typedef struct {
+    int p50;
+    int p95;
+    unsigned sample_count;
+    int samples[X4_RTT_MAX_SAMPLES];
+} X4RttSummary;
+
+void x4_rtc_diag_record_rtt_sample(int rtt_ms);
+void x4_rtc_diag_get_rtt_summary(X4RttSummary *out);
+void x4_rtc_diag_write_rtt_json(FILE *f);
+
 #ifdef __cplusplus
 }
 #endif

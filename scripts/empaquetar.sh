@@ -75,7 +75,7 @@ if [[ "$INCLUDE_DEMO" == 1 ]]; then
     cp assets/sample.h264 "$PACKAGE_ROOT/assets/sample.h264"
 fi
 mkdir -p "$PACKAGE_ROOT/assets/fonts"
-FONT_FILES=(noto_sans.x4font OFL.txt README.md SOURCE.json ATLAS.json)
+FONT_FILES=(noto_sans.x4font inter.x4font OFL.txt Inter-OFL.txt README.md SOURCE.json ATLAS.json)
 for asset in "${FONT_FILES[@]}"; do
     [[ -s "assets/fonts/$asset" ]] || { echo "Missing font asset: $asset" >&2; exit 1; }
     cp "assets/fonts/$asset" "$PACKAGE_ROOT/assets/fonts/$asset"

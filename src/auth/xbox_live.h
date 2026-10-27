@@ -36,6 +36,11 @@ void x4_xbox_work_free(X4XboxWork *work);
  * MRU failures are reported separately and do not invalidate that catalog. */
 const X4CatalogSnapshot *x4_xbox_catalog(X4XboxWork *work, const char *microsoft_token,
     const _Atomic int *cancel, X4XboxProgress progress, void *context);
+/* Queries only /v2/titles on the chosen server, searching specifically for Fortnite.
+ * Does not query Store details, MRU, or covers. Returns READY (count=1) or ERROR
+ * with X4_AUTH_E_FORTNITE_NOT_FOUND. */
+const X4CatalogSnapshot *x4_xbox_fortnite_query(X4XboxWork *work, const char *microsoft_token,
+    const _Atomic int *cancel, X4XboxProgress progress, void *context);
 /* Final temporary MRU result from the same private regional credentials as
  * the last catalog call. No header/token is returned. */
 const X4RecentSnapshot *x4_xbox_catalog_recent(const X4XboxWork *work);
@@ -63,7 +68,8 @@ typedef int (*X4XboxPassport)(void *context, X4Http *http, char *out, size_t cap
  * Microsoft token -> Xbox user token -> XSTS -> credentials for exactly
  * `offering` ("xgpuweb" or "xgpuwebf2p", no fallback) -> default region POST
  * /v5/sessions/cloud/play for title->id -> GET .../state every 2 s until
- * ReadyToConnect/Provisioned (180 s) -> passport provider -> POST
+ * ReadyToConnect/Provisioned (180 s outside the queue; WaitingForResources
+ * has a separate 15 min limit, then a fresh 180 s provision window) -> passport provider -> POST
  * .../connect once -> real RTC SDP/ICE exchange -> receive authenticated
  * RTP and keep the session alive until cancel or failure -> DELETE.
  * The DELETE is attempted once on every path that obtained a validated

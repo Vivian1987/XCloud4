@@ -18,7 +18,7 @@ typedef struct {
     uint32_t xerr;
     unsigned count, total;
     int truncated;
-    char stage[80], region[80], offering[24];
+    char stage[80], region[80], offering[24], gamertag[32];
     X4CatalogTitle titles[X4_CATALOG_MAX];
 } X4CatalogSnapshot;
 

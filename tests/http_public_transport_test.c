@@ -22,6 +22,8 @@ static uint64_t fake_clock;
 static _Atomic int *cancel_during_send;
 
 uint64_t sceKernelGetProcessTime(void) { return fake_clock; }
+int sceKernelUsleep(unsigned int microseconds) { (void)microseconds; return 0; }
+const char *x4_lang_store_suffix(void) { return "&market=MX&languages=es-MX&fieldsTemplate=Details"; }
 static int32_t new_resource(enum ResourceKind kind, int parent)
 {
     CHECK(++next_id < sizeof(resource) / sizeof(resource[0]));
@@ -46,6 +48,8 @@ static int32_t mock_redirect(int32_t tmpl, int32_t on)
 { CHECK(resource[tmpl].kind == TEMPLATE && !on); resource[tmpl].redirect = on; return 0; }
 static int32_t mock_cookie(int32_t tmpl, int32_t on)
 { CHECK(resource[tmpl].kind == TEMPLATE && !on); resource[tmpl].cookies = on; return 0; }
+static int32_t mock_load_cert(int32_t httpId, int32_t nbr, void *cert_list, void *cert, void *priv_key)
+{ (void)cert; (void)priv_key; CHECK(httpId == 53 && (nbr == 11 || nbr == 7) && cert_list != NULL); return 0; }
 static int32_t mock_tls(int32_t tmpl, uint32_t flags)
 { CHECK(resource[tmpl].kind == TEMPLATE && flags == X4_HTTPS_VERIFY_ALL); resource[tmpl].verify = flags; return 0; }
 static int32_t mock_connection(int32_t tmpl, const char *url, bool keepalive)
@@ -148,6 +152,7 @@ int x4_module_symbol(int handle, const char *name, void **address)
     SYMBOL("sceHttpGetStatusCode", mock_status)
     if (missing_header_api && !strcmp(name, "sceHttpGetAllResponseHeaders")) { *address = NULL; return -1; }
     SYMBOL("sceHttpGetAllResponseHeaders", mock_headers)
+    SYMBOL("sceHttpsLoadCert", mock_load_cert)
 #undef SYMBOL
     CHECK(0); return -1;
 }

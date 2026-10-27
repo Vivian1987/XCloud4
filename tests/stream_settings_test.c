@@ -42,8 +42,9 @@ static void model(void)
 {
     X4StreamSettingsUi ui={0};
     X4StreamRequestConfig initial=x4_stream_settings_get();
-    CHECK(initial.profile==X4_REQUEST_720P_HQ&&initial.color_preference==X4_COLOR_AUTO_709);
-    CHECK(initial.cpu_variant==X4_CPU_0&&initial.decoder_depth==X4_DEPTH_AUTO&&initial.interaction_modes==0);
+    CHECK(initial.profile==X4_REQUEST_1080P_G&&initial.color_preference==X4_COLOR_AUTO_709);
+    CHECK(initial.cpu_variant==X4_CPU_0&&initial.decoder_depth==X4_DEPTH_AUTO&&initial.interaction_modes==X4_INTERACTION_VSYNC_OFF);
+    CHECK(initial.convert_mode==1&&initial.sharpness==2&&initial.resolution_request_mode==0);
     /* Keep the existing navigation fixture explicit; only process default changed. */
     CHECK(x4_stream_settings_set(X4_REQUEST_720P60,X4_COLOR_AUTO_709));
     CHECK(!x4_stream_settings_ui_handle(NULL,0,true));
@@ -171,9 +172,9 @@ static void interaction_options(void)
     X4StreamSettingsUi ui={0};
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_OPEN|X4_SETTINGS_CONFIRM,true));
     CHECK(ui.open&&ui.interaction_modes==0);
-    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_UP,true)&&ui.row==7);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_UP,true)&&ui.row==10);
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==0);
-    for(unsigned row=1;row<=7;++row)CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==row);
+    for(unsigned row=1;row<=10;++row)CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_DOWN,true)&&ui.row==row);
     for(unsigned row=4;row<=7;++row) {
         ui.row=row;
         CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT|X4_SETTINGS_CONFIRM,true));
@@ -202,6 +203,30 @@ static void interaction_options(void)
     CHECK(ui.interaction_modes==0);
     CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_CONFIRM,true));
     CHECK(x4_stream_settings_get().interaction_modes==0&&next.interaction_modes==X4_INTERACTION_MASK);
+
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_OPEN,true));
+    ui.row=10;
+    CHECK(((ui.convert_sharp>>3)&3u)==0);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==1);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==2);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==0);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_LEFT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==2);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==0);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_CONFIRM,true));
+    CHECK(x4_stream_settings_get().resolution_request_mode==0);
+
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_OPEN,true));
+    ui.row=10;
+    CHECK(((ui.convert_sharp>>3)&3u)==0);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_RIGHT,true));
+    CHECK(((ui.convert_sharp>>3)&3u)==1);
+    CHECK(x4_stream_settings_ui_handle(&ui,X4_SETTINGS_CONFIRM,true));
+    CHECK(x4_stream_settings_get().resolution_request_mode==1);
 }
 static void write_ppm(const char *dir,const char *name,const uint32_t *p)
 {

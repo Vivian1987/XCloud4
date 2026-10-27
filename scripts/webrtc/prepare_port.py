@@ -718,4 +718,6 @@ from prepare_receive_diagnostics import apply as apply_receive_diagnostics
 apply_receive_diagnostics(base)
 from prepare_receiver_nack import apply as apply_receiver_nack
 apply_receiver_nack(base)
+from prepare_rtt_api import apply as apply_rtt_api
+apply_rtt_api(base)
 print('OpenOrbis dependency overlay prepared:', overlay)

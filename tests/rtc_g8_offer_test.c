@@ -27,6 +27,8 @@ void x4_trace_sdp_bandwidth_record(X4Trace *t,unsigned scope,unsigned sections,u
 }
 int rtcSetRemoteDescription(int pc,const char *text,const char *type)
 {assert(pc==7&&text&&!strcmp(type,"answer")&&answer_records);return remote_result;}
+int rtcGetSelectedCandidatePair(int pc, char *l, int ls, char *r, int rs) {(void)pc;(void)l;(void)ls;(void)r;(void)rs; return -1;}
+int rtcGetRtt(int pc) {(void)pc; return -1;}
 int x4_rtc_receiver_nack_accept(int track,int pc){(void)track;assert(pc==7);return 0;}
 int x4_rtc_receive_track_config(int track){(void)track;return 0;}
 int x4_rtc_poll_receiver_nack(int track){(void)track;return 0;}

@@ -14,7 +14,7 @@ for profile in 1 2;do
   if [[ $mode == sanitized ]];then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer -no-pie);fi
   "${CC:-gcc}" "${flags[@]}" tests/stream_startup_test.c src/streaming/stream_startup.c -o "$destination/policy"
   ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$destination/policy"
-  "${CC:-gcc}" "${flags[@]}" tests/stream_startup_integration_test.c \
+  "${CC:-gcc}" "${flags[@]}" tests/stream_startup_integration_test.c tests/stream_startup_metrics_stubs.c \
    src/video/video_capacity.c src/video/video_pipeline.c src/video/decoder_depth.c src/video/stream_cpu.c src/video/stream_wait.c src/video/stream_au_queue.c src/video/stream_sps.c src/video/stream_diagnostics.c src/video/stream_color_policy.c \
    src/streaming/stream_profile.c src/streaming/stream_startup.c src/streaming/keyframe_limiter.c src/media/live_trace.c src/media/live_monitor.c src/media/video_ingress.c \
    -Wl,--gc-sections -o "$destination/integration"
@@ -24,4 +24,4 @@ for profile in 1 2;do
   done
  done
 done
-printf 'PASS initial resolution unit/real parser/scheduler/native-double integration, profiles1/2, plain+ASan/UBSan; ten seconds are a controlled host clock.\n'
+printf 'PASS initial resolution unit/real parser/scheduler/native-double integration, profiles1/2, plain+ASan/UBSan; the configured startup deadline uses a controlled host clock.\n'

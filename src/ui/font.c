@@ -57,7 +57,7 @@ static int validate(Atlas *a, const unsigned char *b, size_t size)
     for (uint32_t i = 0; i < faces; ++i) {
         const unsigned char *f = b + X4_FONT_HEADER_BYTES + i * X4_FONT_FACE_BYTES;
         uint32_t first = le32(f + 8), count = le32(f + 12), previous = 0;
-        if (le32(f) < 8u || le32(f) > 96u || le32(f + 4) > 1u || !count ||
+        if (le32(f) < 8u || le32(f) > 96u || le32(f + 4) > 2u || !count ||
             (uint64_t)first + count > glyphs || le32(f + 20) > 160u ||
             !le32(f + 20) || le32(f + 24) || le32(f + 28)) return -1;
         for (uint32_t j = 0; j < count; ++j) {
@@ -144,11 +144,16 @@ static int bounded_size(int size)
 static Face select_face(int size, int semibold)
 {
     unsigned best = 0, distance = UINT_MAX;
+    unsigned target_w = semibold <= 0 ? 0u : (semibold >= 2 ? 2u : 1u);
     if (!ready) fallback();
     for (uint32_t i = 0; i < current.face_count; ++i) {
         const unsigned char *f = current.faces + i * X4_FONT_FACE_BYTES;
         unsigned px = le32(f), delta = px > (unsigned)size ? px - (unsigned)size : (unsigned)size - px;
-        if (le32(f + 4) != (semibold ? 1u : 0u)) delta += 1000u;
+        unsigned face_w = le32(f + 4);
+        if (face_w != target_w) {
+            unsigned w_diff = face_w > target_w ? face_w - target_w : target_w - face_w;
+            delta += w_diff * 500u;
+        }
         if (delta < distance) { distance = delta; best = i; }
     }
     const unsigned char *f = current.faces + best * X4_FONT_FACE_BYTES;

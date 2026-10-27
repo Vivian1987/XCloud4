@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include <stdio.h>
+#include <stdlib.h>
+#include "../ui/apple_ui.h"
+#include "../ui/loading_screen.h"
+#include "../ui/ui_perf.h"
+#include "../ui/ui_draw_metrics.h"
 #include <string.h>
 #include <stdatomic.h>
 #include <orbis/GnmDriver.h>
@@ -17,9 +22,12 @@
 #include "build_identity.h"
 #include "probe_controller.h"
 #include "../streaming/stream_profile.h"
+#include "../streaming/stream_startup.h"
 #include "../ui/stream_video_status.h"
 #include "../ui/stream_settings.h"
 #include "../auth/release_check.h"
+#include "../ui/picture_settings.h"
+#include "../ui/server_settings.h"
 
 #if X4_STREAM_PROFILE && !X4_VIDEO_PROBE
 /* Main is the sole writer and exporter. No pad read or local action is
@@ -59,10 +67,15 @@ static uint64_t interaction_percentile(const InteractionTimes *h,unsigned percen
         return i==INTERACTION_HIST_BINS-1?h->max:(uint64_t)(i+1)*50u;
     return h->max;
 }
+static X4UiPerf menu_copy_times,menu_prepare_times;
+static uint64_t menu_log_at,menu_interval_frames,menu_interval_open_frames;
 static void interaction_main_begin(unsigned modes,uint64_t now)
 {
     memset(&interaction_main,0,sizeof(interaction_main));
     interaction_main.available=true;interaction_main.modes=modes;interaction_main.begin_us=now;
+    memset(&menu_copy_times,0,sizeof(menu_copy_times));memset(&menu_prepare_times,0,sizeof(menu_prepare_times));
+    menu_log_at=menu_interval_frames=menu_interval_open_frames=0;
+    x4_touch_menu_cache_reset();
 }
 static void interaction_phase(unsigned phase,uint64_t now)
 {
@@ -149,7 +162,13 @@ void x4_main_interaction_metrics_write(FILE *f)
     for(uint64_t i=0;i<n;++i){if(i)fputc(',',f);fprintf(f,"{\"at_us\":%llu,\"elapsed_us\":%llu,\"phase\":%u}",(unsigned long long)interaction_main.gap[i].at_us,(unsigned long long)interaction_main.gap[i].elapsed_us,interaction_main.gap[i].phase);}
     fputs("],\"counts_by_phase\":[",f);
     for(unsigned i=0;i<INTERACTION_PHASES;++i){if(i)fputc(',',f);fprintf(f,"%llu",(unsigned long long)interaction_main.phase_gaps[i]);}
-    fputs("]}}",f);
+    fputs("]},\"menu_ui\":{\"steady_overlay_us\":",f);x4_ui_perf_write(f,&menu_copy_times);
+    fputs(",\"preparation_us\":",f);x4_ui_perf_write(f,&menu_prepare_times);
+    X4TouchMenuCacheStats menu_stats;x4_touch_menu_cache_snapshot(&menu_stats);
+    fprintf(f,",\"regenerations\":%llu,\"composed_frames\":%llu,\"copied_bytes\":%llu,\"cache_bytes\":%zu,\"scope\":\"prepare outside presentation; steady_overlay includes the menu copy and any ordinary live status overlay; opaque write-only destination\"},\"loading_ui\":",
+        (unsigned long long)menu_stats.regenerations,(unsigned long long)menu_stats.frames,
+        (unsigned long long)menu_stats.copied_bytes,menu_stats.cache_bytes);
+    x4_loading_screen_metrics_write(f);fputc('}',f);
 }
 #endif
 
@@ -179,9 +198,40 @@ typedef struct {
 static void stream_overlay(uint32_t *pixels,void *context)
 {
     const StreamOverlayContext *c=context;
+    uint64_t begin=sceKernelGetProcessTime();
+    uint64_t overlay_begin=begin;
     x4_live_overlay(c->media,c->session,c->muted,c->touch_menu,c->show_banner,pixels);
+    uint64_t end=sceKernelGetProcessTime();
+    ++menu_interval_frames;
+    if(c->touch_menu&&c->touch_menu->is_open){
+        ++menu_interval_open_frames;x4_ui_perf_record(&menu_copy_times,end-overlay_begin);
+    }
+#if !X4_PUBLIC
+    if(!menu_log_at)menu_log_at=begin;
+    if(end-menu_log_at>=5000000u){
+        X4TouchMenuCacheStats stats;x4_touch_menu_cache_snapshot(&stats);
+        printf("XCloud4 UI menu: copy_n=%llu p50_us=%llu p95_us=%llu max_us=%llu prepare_n=%llu prepare_max_us=%llu regenerations=%llu frames=%llu menu_frames=%llu cache_bytes=%zu\n",
+            (unsigned long long)menu_copy_times.n,(unsigned long long)x4_ui_perf_percentile(&menu_copy_times,50),
+            (unsigned long long)x4_ui_perf_percentile(&menu_copy_times,95),(unsigned long long)menu_copy_times.max,
+            (unsigned long long)menu_prepare_times.n,(unsigned long long)menu_prepare_times.max,
+            (unsigned long long)stats.regenerations,(unsigned long long)menu_interval_frames,
+            (unsigned long long)menu_interval_open_frames,stats.cache_bytes);
+        menu_log_at=end;menu_interval_frames=menu_interval_open_frames=0;
+    }
+#endif
     if(c->received_banner) x4_stream_received_draw(pixels,c->media->width,c->media->height,
         c->media->video_matrix_received,c->media->video_matrix_selected,c->media->video_full_range);
+}
+static void loading_begin_cached(X4CatalogAssets *assets,const X4CatalogTitle *title,uint64_t now)
+{
+    x4_picture_settings_ui_cache_invalidate();x4_catalog_gui_keyboard_cache_invalidate();
+    static X4CatalogAssetView view;
+    memset(&view,0,sizeof(view));
+    int acquired=assets&&title&&title->product_id[0]&&x4_catalog_assets_acquire(assets,title->product_id,&view);
+    const X4CoverRaster *image=acquired&&view.surface[X4_COVER_DETAIL].rgba?&view.surface[X4_COVER_DETAIL]:NULL;
+    bool ready=x4_loading_screen_begin(title?title->name:"XCloud4",image,now);
+    if(acquired)x4_catalog_assets_release(assets,&view);
+    if(!ready)printf("XCloud4 UI loading: cache allocation unavailable; existing session screen retained\n");
 }
 /* Main is the only display owner. Stop only video once, preserve the RTC
  * and audio owners, and let the explicit detached observation authorize UI
@@ -193,7 +243,7 @@ static void stream_halt_video_error(X4LiveMedia *live, X4LiveMediaSnapshot *stat
     *handled = true;
     int halt_rc = x4_live_media_stream_halt_video(live);
     x4_live_media_snapshot(live, status);
-    char message[160];
+    char message[256];
     (void)x4_stream_video_error_text(message, sizeof(message),
         status->video_rejected_width, status->video_rejected_height, error);
     printf("XCloud4: %s video_error=%d halt_rc=%d display_detached=%d; audio/RTC no cancelados\n",
@@ -202,7 +252,7 @@ static void stream_halt_video_error(X4LiveMedia *live, X4LiveMediaSnapshot *stat
 #if X4_PUBLIC
         printf("XCloud4: VideoOut sigue retenido; no se puede dibujar el aviso ni reabrir UI con seguridad. PARA SALIR: BOTON PS > CERRAR APLICACION.\n");
 #else
-        printf("XCloud4: VideoOut sigue retenido; no se puede dibujar el aviso ni reabrir UI con seguridad. OPTIONS sigue disponible para salir.\n");
+        printf("XCloud4: VideoOut sigue retenido; no se puede dibujar el aviso ni reabrir UI con seguridad. usa el botón PS para cerrar la aplicación.\n");
 #endif
     }
 }
@@ -216,6 +266,26 @@ static void main_submit_done(void)
         gnm_idle_error_logged = true;
     }
 }
+#endif
+
+/* Decode the existing packaged icon before the single image worker starts.
+ * No disk read/decoder allocation occurs in any screen draw. */
+#if !X4_VIDEO_PROBE
+static X4CoverRasters ui_app_icon;
+static void load_ui_app_icon(void)
+{
+    if (ui_app_icon.surface[X4_COVER_GRID].rgba) return;
+    FILE *f=fopen("/app0/assets/icon0.png","rb");
+    if (!f) return;
+    if (fseek(f,0,SEEK_END)) { fclose(f); return; }
+    long size=ftell(f);
+    if (size<=0 || size>2*1024*1024 || fseek(f,0,SEEK_SET)) { fclose(f); return; }
+    unsigned char *bytes=malloc((size_t)size);
+    if (bytes && fread(bytes,1,(size_t)size,f)==(size_t)size)
+        (void)x4_cover_decode(bytes,(size_t)size,&ui_app_icon);
+    free(bytes);fclose(f);
+}
+
 #endif
 
 int main(void)
@@ -239,7 +309,7 @@ int main(void)
     X4RecentGames recent;
     static X4CatalogPresentation presentation;
     X4CatalogAssets *catalog_assets = NULL;
-    uint64_t ui_generation = 0, metadata_revision = 0;
+    uint64_t ui_generation = 1, metadata_revision = 0;
     int pending_auth = -1, pending_launch = 0;
     char pending_title_id[96] = {0};
     uint64_t pending_generation = 0;
@@ -247,6 +317,8 @@ int main(void)
     X4SessionSnapshot session = {0};
     unsigned catalog_selected = 0;
     int session_back = 0;
+    bool is_fortnite_session = false;
+    bool fortnite_login_flow = false;
     int game_controls = 0;
     int media_active = 0;
     int closing = 0;
@@ -261,8 +333,13 @@ int main(void)
 #if X4_STREAM_PROFILE
     bool stream_display_active=false;
     X4StreamSettingsUi stream_settings_ui={0};
+#if !X4_PUBLIC
     uint64_t stream_received_until=0;
 #endif
+#endif
+    x4_server_settings_init();
+    x4_picture_settings_init();
+    X4PictureSettingsUi picture_settings_ui={0};
     bool diagnostic_stable = false;
     uint64_t diagnostic_mark = 0;
     X4TouchMenu touch_menu;
@@ -273,6 +350,11 @@ int main(void)
     uint64_t input_previous = 0, input_report_at = 0;
     uint64_t input_intervals = 0, input_interval_us = 0, input_interval_max_us = 0;
     uint64_t idle_present_skips = 0;
+    uint32_t ui_state_sig = 0;
+    unsigned ui_dirty_buffers = 2;
+    uint64_t ui_dirty_skips = 0;
+    enum X4UiScreen ui_previous_metric=X4_UI_OTHER;
+    bool ui_previous_navigation=false;
 #if X4_RUMBLE
 #if X4_STREAM_PROFILE
     InteractionRumble rumble_state={.handle=-1};
@@ -284,15 +366,20 @@ int main(void)
     bool rumble_was_connected=false;
 #endif
     x4_catalog_browser_init(&catalog_browser);
+    catalog_browser.apple_mode = true;
     x4_recent_init(&recent);
     x4_catalog_presentation_init(&presentation);
+    x4_catalog_presentation_set_generation(&presentation, ui_generation);
     setvbuf(stdout, NULL, _IONBF, 0);
     (void)x4_lang_init();
     x4_release_check_start();
 reopen_interface:;
-    if (x4_font_init("/app0/assets/fonts/noto_sans.x4font") < 0)
+    if (x4_font_init("/app0/assets/fonts/inter.x4font") < 0 &&
+        x4_font_init("/app0/assets/fonts/noto_sans.x4font") < 0)
         printf("XCloud4: fuente externa no disponible; respaldo suavizado activo\n");
+    load_ui_app_icon();
     catalog_assets = x4_catalog_assets_create();
+    x4_catalog_assets_set_generation(catalog_assets, ui_generation);
     int rc = x4_display_open(&display);
     if (rc < 0) {
         printf("XCloud4: no se pudo iniciar VideoOut: 0x%08x\n", (unsigned)rc);
@@ -301,6 +388,9 @@ reopen_interface:;
         if (x4_exit_prepare() >= 0) x4_exit_request();
         for (;;) sceKernelUsleep(100000);
     }
+    x4_ui_draw_metrics_reset();
+    x4_picture_settings_ui_cache_invalidate();
+    x4_catalog_gui_keyboard_cache_invalidate();
     x4_controller_init(&controller);
 #if X4_STREAM_PROFILE
     stream_display_active=false;
@@ -366,6 +456,15 @@ reopen_interface:;
          * momentary status change must never turn B/Menu into local exit. */
         if (!x4_auth_busy(auth) || screen.page != 6) game_controls = 0;
         else if (session.rtc_connected) game_controls = 1;
+#if X4_STREAM_PROFILE
+        /* Loading owns Cancel until its transition hands over the display,
+         * even if RTC already connected. The in-game pad protocol is unchanged. */
+        X4LoadingView loading_input;x4_loading_screen_snapshot(&loading_input);
+        if(screen.page==6&&loading_input.active&&
+            !session_back&&!closing&&(controller.pressed&ORBIS_PAD_BUTTON_CIRCLE)){
+            trace_inactive(live);x4_auth_cancel(auth);session_back=1;
+        }
+#endif
         bool game_input = screen.page == 6 && game_controls && x4_auth_busy(auth) &&
             !closing && !session_back && !live_error;
 #if X4_PUBLIC
@@ -423,6 +522,16 @@ reopen_interface:;
 #endif
 #endif
         if (!closing) {
+            static bool first_choice_modal_opened = false;
+            bool awaiting_first = x4_server_settings_awaiting_first_choice();
+            if (awaiting_first) {
+                if (!first_choice_modal_opened) {
+                    x4_picture_settings_open_server_first_time(&picture_settings_ui);
+                    first_choice_modal_opened = true;
+                }
+            } else {
+                first_choice_modal_opened = false;
+            }
             uint32_t ui_pressed = controller.pressed;
             if (game_input) ui_pressed &= ~ORBIS_PAD_BUTTON_OPTIONS;
             /* CIRCLE finishes keyboard editing before account navigation.
@@ -445,10 +554,39 @@ reopen_interface:;
                     !pending_launch&&!session_back&&!live_retained;
                 stream_settings_consumed=x4_stream_settings_ui_handle(&stream_settings_ui,actions,can_edit);
                 if(stream_settings_consumed) ui_pressed&=ORBIS_PAD_BUTTON_OPTIONS;
+                if(stream_settings_consumed || stream_settings_ui.open) controller.pressed = 0;
             } else stream_settings_ui.open=false;
 #elif X4_STREAM_PROFILE
             (void)stream_settings_ui;
 #endif
+            bool can_edit_pic = (picture_settings_ui.first_time_mode ||
+                ((screen.page == 0 || screen.page == 4 || screen.page == 5 || screen.page == 8) && !x4_auth_busy(auth) && pending_auth < 0)) &&
+                !game_input && !catalog_browser.editing && !pending_launch && !session_back && !live_retained && !closing;
+            unsigned pic_actions = 0;
+            if ((controller.pressed & ORBIS_PAD_BUTTON_OPTIONS) && screen.page == 8 && !picture_settings_ui.open) {
+                picture_settings_ui.tab = 1;
+            }
+            if (controller.pressed & ORBIS_PAD_BUTTON_OPTIONS) pic_actions |= X4_PIC_SETTINGS_OPEN;
+            if (controller.pressed & ORBIS_PAD_BUTTON_UP) pic_actions |= X4_PIC_SETTINGS_UP;
+            if (controller.pressed & ORBIS_PAD_BUTTON_DOWN) pic_actions |= X4_PIC_SETTINGS_DOWN;
+            if (controller.pressed & ORBIS_PAD_BUTTON_CROSS) pic_actions |= X4_PIC_SETTINGS_CONFIRM;
+            if (controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) pic_actions |= X4_PIC_SETTINGS_CANCEL;
+            if (controller.pressed & ORBIS_PAD_BUTTON_L1) pic_actions |= X4_PIC_SETTINGS_PREV_TAB;
+            if (controller.pressed & ORBIS_PAD_BUTTON_R1) pic_actions |= X4_PIC_SETTINGS_NEXT_TAB;
+            bool pic_consumed = x4_picture_settings_ui_handle(&picture_settings_ui, pic_actions, can_edit_pic);
+            if (pic_consumed || picture_settings_ui.open) {
+                ui_pressed = 0;
+                controller.pressed = 0;
+            }
+            if (picture_settings_ui.server_changed) {
+                picture_settings_ui.server_changed = false;
+                if (screen.page == 8 && !x4_auth_busy(auth)) {
+                    pending_auth = X4_AUTH_FORTNITE_QUERY;
+                } else if (screen.page == 5 && catalog.state == X4_CATALOG_READY && !x4_auth_busy(auth)) {
+                    catalog_selected = 0;
+                    pending_auth = X4_AUTH_XBOX_CATALOG;
+                }
+            }
             if (game_input && x4_touch_menu_is_open(&touch_menu)) {
                 X4TouchMenuAction menu_action = x4_touch_menu_update(&touch_menu, controller.pressed, controller.data.buttons, controller_read_at);
                 switch (menu_action) {
@@ -484,14 +622,52 @@ reopen_interface:;
                 }
                 ui_pressed = 0;
             }
+            if (screen.page == 5 && catalog_browser.editing) {
+                ui_pressed &= ~ORBIS_PAD_BUTTON_CIRCLE;
+            }
+            screen.signed_in = (account.state == X4_AUTH_AUTHORIZED);
             x4_screen_update(&screen, ui_pressed, controller.data.buttons);
+            if (screen.open_settings_requested) {
+                screen.open_settings_requested = 0;
+                if (can_edit_pic) {
+                    (void)x4_picture_settings_ui_handle(&picture_settings_ui, X4_PIC_SETTINGS_OPEN, true);
+                }
+            }
+            if (screen.explore_catalog_requested) {
+                screen.explore_catalog_requested = 0;
+                catalog_browser.apple_mode = true;
+                catalog_browser.active_tab = X4_CAT_TAB_DISCOVER;
+                catalog_browser.top_bar_focused = false;
+                catalog_browser.hero_focused = true;
+                if (screen.signed_in) {
+                    screen.page = 5;
+                    screen.catalog_from_home = 1;
+                    if (!x4_auth_busy(auth) && pending_auth < 0) {
+                        if (catalog.state != X4_CATALOG_READY) {
+                            catalog_selected = 0;
+                            pending_auth = X4_AUTH_XBOX_CATALOG;
+                        } else {
+                            pending_auth = X4_AUTH_XBOX_RECENTS;
+                        }
+                    }
+                } else {
+                    screen.auto_catalog_after_login = 1;
+                    screen.page = 4;
+                    if (!x4_auth_busy(auth) && pending_auth < 0) {
+                        pending_auth = X4_AUTH_SIGN_IN;
+                    }
+                }
+            }
         }
-        if ((previous_page == 4 || previous_page == 5 || previous_page == 6) && screen.page != previous_page) {
+        if ((previous_page == 0 || previous_page == 4 || previous_page == 5 || previous_page == 6 || previous_page == 8) && screen.page != previous_page) {
             x4_catalog_assets_suspend(catalog_assets);
             pending_launch = 0;
-            pending_auth = -1;
-            trace_inactive(live);
-            x4_auth_cancel(auth);
+            if (!(previous_page == 4 && (screen.page == 8 || screen.page == 5)) &&
+                !(previous_page == 0 && (screen.page == 4 || screen.page == 5 || screen.page == 8))) {
+                pending_auth = -1;
+                trace_inactive(live);
+                x4_auth_cancel(auth);
+            }
         }
         if (screen.exit_requested) {
             x4_catalog_assets_suspend(catalog_assets);
@@ -511,24 +687,58 @@ reopen_interface:;
                 } else break;
             }
         }
-        if (!closing && screen.page == 4 && previous_page == 4 && !x4_auth_busy(auth) && pending_auth < 0) {
-            if (controller.pressed & ORBIS_PAD_BUTTON_CROSS) pending_auth = X4_AUTH_SIGN_IN;
-#if !X4_PUBLIC
-            else if (controller.pressed & ORBIS_PAD_BUTTON_SQUARE) pending_auth = X4_AUTH_CHECK_CONNECTION;
-#endif
-            else if (controller.pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
-                x4_catalog_assets_suspend(catalog_assets);
-                pending_auth = -1;
-                if (!x4_auth_busy(auth)) x4_auth_forget(auth);
-                x4_recent_init(&recent);
-            }
-            else if ((controller.pressed & ORBIS_PAD_BUTTON_R1) &&
-                     account.state == X4_AUTH_AUTHORIZED && !x4_auth_busy(auth)) {
+        if (!closing && screen.page == 4 && previous_page == 4) {
+            if (fortnite_login_flow) {
+                if (controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) {
+                    fortnite_login_flow = false;
+                    trace_inactive(live);
+                    x4_auth_cancel(auth);
+                    screen.page = 0;
+                } else if (account.state == X4_AUTH_AUTHORIZED && !x4_auth_busy(auth)) {
+                    fortnite_login_flow = false;
+                    screen.page = 8;
+                    screen.selected = (int)x4_picture_settings_get();
+                    pending_auth = X4_AUTH_FORTNITE_QUERY;
+                }
+            } else if (screen.auto_catalog_after_login && account.state == X4_AUTH_AUTHORIZED && !x4_auth_busy(auth)) {
+                screen.auto_catalog_after_login = 0;
+                screen.catalog_from_home = 1;
                 screen.page = 5;
-                if (catalog.state != X4_CATALOG_READY) {
-                    catalog_selected = 0;
-                    pending_auth = X4_AUTH_XBOX_CATALOG;
-                } else pending_auth = X4_AUTH_XBOX_RECENTS;
+                catalog_browser.apple_mode = true;
+                catalog_browser.active_tab = X4_CAT_TAB_DISCOVER;
+                catalog_browser.top_bar_focused = false;
+                catalog_browser.hero_focused = true;
+                if (pending_auth < 0) {
+                    if (catalog.state != X4_CATALOG_READY) {
+                        catalog_selected = 0;
+                        pending_auth = X4_AUTH_XBOX_CATALOG;
+                    } else {
+                        pending_auth = X4_AUTH_XBOX_RECENTS;
+                    }
+                }
+            } else if (!x4_auth_busy(auth) && pending_auth < 0) {
+                if (controller.pressed & ORBIS_PAD_BUTTON_CROSS) pending_auth = X4_AUTH_SIGN_IN;
+#if !X4_PUBLIC
+                else if (controller.pressed & ORBIS_PAD_BUTTON_SQUARE) pending_auth = X4_AUTH_CHECK_CONNECTION;
+#endif
+                else if (controller.pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
+                    x4_catalog_assets_suspend(catalog_assets);
+                    pending_auth = -1;
+                    if (!x4_auth_busy(auth)) x4_auth_forget(auth);
+                    x4_recent_init(&recent);
+                }
+                else if ((controller.pressed & ORBIS_PAD_BUTTON_R1) &&
+                         account.state == X4_AUTH_AUTHORIZED && !x4_auth_busy(auth)) {
+                    screen.page = 5;
+                    catalog_browser.apple_mode = true;
+                    catalog_browser.active_tab = X4_CAT_TAB_DISCOVER;
+                    catalog_browser.top_bar_focused = false;
+                    catalog_browser.hero_focused = true;
+                    if (catalog.state != X4_CATALOG_READY) {
+                        catalog_selected = 0;
+                        pending_auth = X4_AUTH_XBOX_CATALOG;
+                    } else pending_auth = X4_AUTH_XBOX_RECENTS;
+                }
             }
         }
         /* Public Store work must release native HTTP/Net before auth uses
@@ -562,6 +772,7 @@ reopen_interface:;
             x4_catalog_presentation_apply_names(&presentation, &catalog);
             x4_catalog_browser_rebuild(&catalog_browser, &catalog);
             x4_recent_refresh_catalog(&recent, &catalog);
+            x4_catalog_browser_rebuild_featured(&catalog_browser, &catalog, &recent);
             if (catalog.state != X4_CATALOG_READY) catalog_browser.editing = false;
         }
         bool recent_copied = x4_auth_recent_snapshot_cached(auth, &recent_snapshot, &recent_cursor) != 0;
@@ -576,9 +787,10 @@ reopen_interface:;
                     recent_snapshot.http_status, &catalog);
             else if (recent_snapshot.state == X4_CATALOG_IDLE) x4_recent_init(&recent);
             x4_catalog_browser_sync_recents(&catalog_browser, &recent);
+            x4_catalog_browser_rebuild_featured(&catalog_browser, &catalog, &recent);
         }
         bool metadata_changed = false;
-        if (screen.page == 5 && !x4_auth_busy(auth)) {
+        if ((screen.page == 0 || screen.page == 5) && !x4_auth_busy(auth)) {
             X4ProductMetadata completed[X4_CATALOG_ASSET_SLOTS];
             uint64_t revision = 0;
             size_t n = x4_catalog_assets_copy_metadata(catalog_assets, completed, X4_CATALOG_ASSET_SLOTS, &revision);
@@ -589,12 +801,13 @@ reopen_interface:;
                 if (metadata_changed) {
                     x4_catalog_browser_rebuild(&catalog_browser, &catalog);
                     x4_recent_refresh_catalog(&recent, &catalog);
+                    x4_catalog_browser_rebuild_featured(&catalog_browser, &catalog, &recent);
                 }
             }
         }
         x4_auth_session_snapshot(auth, &session);
         if (!closing && screen.page == 6 && previous_page == 6) {
-            if ((controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) && !game_input) {
+            if ((controller.pressed & ORBIS_PAD_BUTTON_CIRCLE) && !game_input && !session_back) {
                 trace_inactive(live);
                 x4_auth_cancel(auth);
                 session_back = 1;
@@ -602,11 +815,18 @@ reopen_interface:;
             /* Keep the session page visible until remote cleanup finishes. */
             if (session_back && !x4_auth_busy(auth)) {
                 session_back = 0;
-                screen.page = 5;
-                pending_auth = X4_AUTH_XBOX_RECENTS;
+                if (is_fortnite_session) {
+                    screen.page = 8;
+                    screen.selected = (int)x4_picture_settings_get();
+                    is_fortnite_session = false;
+                } else {
+                    screen.page = 5;
+                    pending_auth = X4_AUTH_XBOX_RECENTS;
+                }
             }
         }
         if (!closing && screen.page == 5 && previous_page == 5) {
+            static uint64_t search_debounce_deadline = 0;
             uint32_t pressed = controller.pressed;
             bool queued_launch_ready = false;
             if (pending_launch) {
@@ -629,6 +849,10 @@ reopen_interface:;
             if (catalog_browser.editing) {
                 if (pressed & (ORBIS_PAD_BUTTON_R2 | ORBIS_PAD_BUTTON_CIRCLE)) {
                     catalog_browser.editing = false;
+                    if (catalog_browser.criteria_dirty) {
+                        x4_catalog_browser_rebuild(&catalog_browser, &catalog);
+                        search_debounce_deadline = 0;
+                    }
                 } else {
                     if (pressed & ORBIS_PAD_BUTTON_UP)
                         x4_catalog_browser_keyboard_move(&catalog_browser, 0, -1);
@@ -638,18 +862,26 @@ reopen_interface:;
                         x4_catalog_browser_keyboard_move(&catalog_browser, -1, 0);
                     if (pressed & ORBIS_PAD_BUTTON_RIGHT)
                         x4_catalog_browser_keyboard_move(&catalog_browser, 1, 0);
-                    if (pressed & ORBIS_PAD_BUTTON_TRIANGLE)
+                    if (pressed & ORBIS_PAD_BUTTON_TRIANGLE) {
                         x4_catalog_browser_query_clear(&catalog_browser);
-                    else if (pressed & ORBIS_PAD_BUTTON_SQUARE)
+                        search_debounce_deadline = sceKernelGetProcessTime() + 150000;
+                    } else if (pressed & ORBIS_PAD_BUTTON_SQUARE) {
                         x4_catalog_browser_query_delete(&catalog_browser);
-                    else if (pressed & ORBIS_PAD_BUTTON_R1)
+                        search_debounce_deadline = sceKernelGetProcessTime() + 150000;
+                    } else if (pressed & ORBIS_PAD_BUTTON_R1) {
                         x4_catalog_browser_query_append(&catalog_browser, ' ');
-                    else if (pressed & ORBIS_PAD_BUTTON_CROSS)
+                        search_debounce_deadline = sceKernelGetProcessTime() + 150000;
+                    } else if (pressed & ORBIS_PAD_BUTTON_CROSS) {
                         x4_catalog_browser_query_append(&catalog_browser,
                             x4_catalog_browser_keyboard_char(&catalog_browser));
+                        search_debounce_deadline = sceKernelGetProcessTime() + 150000;
+                    }
                 }
-                if (catalog_browser.criteria_dirty)
+                if (catalog_browser.criteria_dirty &&
+                    (search_debounce_deadline == 0 || sceKernelGetProcessTime() >= search_debounce_deadline)) {
                     x4_catalog_browser_rebuild(&catalog_browser, &catalog);
+                    search_debounce_deadline = 0;
+                }
             } else if ((pressed & ORBIS_PAD_BUTTON_TRIANGLE) &&
                        catalog.state == X4_CATALOG_READY && !x4_auth_busy(auth)) {
                 catalog_browser.editing = true;
@@ -658,6 +890,20 @@ reopen_interface:;
                 pending_auth = catalog_browser.section == X4_CATALOG_SECTION_RECENT && recent.state == X4_RECENT_ERROR ?
                     X4_AUTH_XBOX_RECENTS : X4_AUTH_XBOX_CATALOG;
             } else {
+                uint8_t rstick_y = controller.data.rightStick.y;
+                static uint64_t next_rstick_scroll_us = 0;
+                uint64_t now_us = sceKernelGetProcessTime();
+                if (now_us >= next_rstick_scroll_us) {
+                    if (rstick_y < 80) {
+                        if (x4_catalog_browser_scroll_detail(&catalog_browser, -1)) {
+                            next_rstick_scroll_us = now_us + 120000;
+                        }
+                    } else if (rstick_y > 175) {
+                        if (x4_catalog_browser_scroll_detail(&catalog_browser, 1)) {
+                            next_rstick_scroll_us = now_us + 120000;
+                        }
+                    }
+                }
                 if (pressed & ORBIS_PAD_BUTTON_L2)
                     x4_catalog_browser_cycle_filter(&catalog_browser, -1);
                 if (pressed & ORBIS_PAD_BUTTON_R2)
@@ -665,17 +911,40 @@ reopen_interface:;
                 if (catalog_browser.criteria_dirty)
                     x4_catalog_browser_rebuild(&catalog_browser, &catalog);
                 if (pressed & ORBIS_PAD_BUTTON_UP)
-                    x4_catalog_browser_nav(&catalog_browser, &catalog, &recent, 0, -1);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, 0, -1, 0);
                 if (pressed & ORBIS_PAD_BUTTON_DOWN)
-                    x4_catalog_browser_nav(&catalog_browser, &catalog, &recent, 0, 1);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, 0, 1, 0);
                 if (pressed & ORBIS_PAD_BUTTON_LEFT)
-                    x4_catalog_browser_nav(&catalog_browser, &catalog, &recent, -1, 0);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, -1, 0, 0);
                 if (pressed & ORBIS_PAD_BUTTON_RIGHT)
-                    x4_catalog_browser_nav(&catalog_browser, &catalog, &recent, 1, 0);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, 1, 0, 0);
                 if (pressed & ORBIS_PAD_BUTTON_L1)
-                    x4_catalog_browser_page_move(&catalog_browser, &catalog, &recent, -1);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, 0, 0, -1);
                 if (pressed & ORBIS_PAD_BUTTON_R1)
-                    x4_catalog_browser_page_move(&catalog_browser, &catalog, &recent, 1);
+                    x4_catalog_browser_apple_nav(&catalog_browser, &catalog, &recent, 0, 0, 1);
+                if ((pressed & ORBIS_PAD_BUTTON_CROSS) && catalog_browser.top_bar_focused) {
+                    (void)x4_catalog_browser_activate_top_bar(&catalog_browser);
+                    pressed &= ~ORBIS_PAD_BUTTON_CROSS;
+                }
+                if (catalog_browser.open_fortnite_requested) {
+                    catalog_browser.open_fortnite_requested = false;
+                    catalog_browser.active_tab = X4_CAT_TAB_DISCOVER;
+                    screen.page = 8;
+                    pressed &= ~ORBIS_PAD_BUTTON_CROSS;
+                }
+                if (catalog_browser.open_settings_requested) {
+                    catalog_browser.open_settings_requested = false;
+                    if (!x4_auth_busy(auth) && pending_auth < 0 && !catalog_browser.editing &&
+                        !pending_launch && !session_back && !live_retained) {
+                        (void)x4_picture_settings_ui_handle(&picture_settings_ui, X4_PIC_SETTINGS_OPEN, true);
+                    }
+                    pressed &= ~ORBIS_PAD_BUTTON_CROSS;
+                }
+                if (catalog_browser.open_account_requested) {
+                    catalog_browser.open_account_requested = false;
+                    screen.page = 4;
+                    pressed &= ~ORBIS_PAD_BUTTON_CROSS;
+                }
                 unsigned source_index;
                 /* A fresh response or a navigation/filter press can select a
                  * row that has not been shown yet. Require a later X edge. */
@@ -700,7 +969,9 @@ reopen_interface:;
                     live_error = 0;
 #if X4_STREAM_PROFILE
                     video_start_error = false;
+#if !X4_PUBLIC
                     stream_received_until=0;
+#endif
                     /* One immutable main-thread copy binds media and /play
                      * to the same confirmed menu selection for this session. */
                     X4StreamRequestConfig request_cfg=x4_stream_settings_get();
@@ -748,6 +1019,9 @@ reopen_interface:;
 #endif
                     }
                     if (rc && !live_error) live_error = rc;
+#if X4_STREAM_PROFILE
+                    loading_begin_cached(catalog_assets,catalog_selected<catalog.count?&catalog.titles[catalog_selected]:NULL,sceKernelGetProcessTime());
+#endif
                     x4_auth_session_snapshot(auth, &session);
                     if (rc == 0 || session.state == X4_SESSION_ERROR || live_error) {
                         session_back = 0;
@@ -759,13 +1033,128 @@ reopen_interface:;
                 }
             }
         }
+        if (!closing && screen.page == 8 && previous_page != 8) {
+            if (account.state != X4_AUTH_AUTHORIZED) {
+                fortnite_login_flow = true;
+                screen.page = 4;
+                pending_auth = X4_AUTH_SIGN_IN;
+            } else {
+                screen.selected = (int)x4_picture_settings_get();
+                if (!x4_auth_busy(auth) && pending_auth < 0) {
+                    pending_auth = X4_AUTH_FORTNITE_QUERY;
+                }
+            }
+        }
+        if (!closing && screen.page == 8 && previous_page == 8 && !picture_settings_ui.open) {
+            uint32_t pressed = controller.pressed;
+            if ((pressed & ORBIS_PAD_BUTTON_CROSS) && catalog.state == X4_CATALOG_READY &&
+                catalog.count > 0 && !x4_auth_busy(auth) && pending_auth < 0) {
+                x4_picture_settings_set((X4PictureQualityOption)screen.selected);
+#if !X4_PUBLIC
+                X4StreamRequestProfile prof = x4_picture_settings_to_profile((X4PictureQualityOption)screen.selected);
+                x4_stream_settings_set_lab(prof, X4_COLOR_AUTO_709, X4_CPU_0, X4_DEPTH_AUTO,
+                    X4_INTERACTION_VSYNC_OFF, X4_CONVERT_SMOOTH_DEFAULT, X4_SHARPNESS_PUBLIC_DEFAULT, 0);
+#endif
+                catalog_selected = 0;
+                live_presented = false;
+                live_error = 0;
+#if X4_STREAM_PROFILE
+                video_start_error = false;
+#if !X4_PUBLIC
+                stream_received_until = 0;
+#endif
+                X4StreamRequestConfig request_cfg = x4_stream_settings_get();
+#endif
+                if (live) {
+                    trace_inactive(live);
+                    live_error = x4_auth_set_media_callback(auth, NULL, NULL, NULL);
+#if X4_STREAM_PROFILE && X4_RUMBLE
+                    if (!live_error) interaction_rumble_stop(&rumble_state, controller.handle);
+#endif
+                    if (!live_error) live_error = x4_live_media_close(live);
+                    if (!live_error) live = NULL;
+                }
+                if (!live_error) {
+                    live_retained = 0;
+#if X4_STREAM_PROFILE
+                    interaction_main_begin(request_cfg.interaction_modes, sceKernelGetProcessTime());
+                    x4_rtc_input_metrics_reset();
+                    live = x4_live_media_create_request(&live_error, &request_cfg);
+#else
+                    live = x4_live_media_create(&live_error);
+#endif
+                    diagnostic_stable = false;
+                    diagnostic_mark = 0;
+                    if (live) {
+                        live_error = x4_live_media_set_payload_type(live, X4_LIVE_KIND_VIDEO, 102);
+                        if (!live_error) live_error = x4_live_media_set_payload_type(live, X4_LIVE_KIND_AUDIO, 111);
+                        if (!live_error) live_error = x4_live_media_start(live);
+                    }
+                }
+                memset(&live_status, 0, sizeof(live_status));
+                live_muted = 0;
+                rc = live_error;
+                if (!rc) rc = x4_auth_set_media_callback(auth, x4_live_media_receive, live, x4_live_media_trace(live));
+                if (!rc) rc = x4_auth_set_grace_inbox(auth, x4_live_media_grace_inbox(live));
+#if X4_STREAM_PROFILE
+                if (!rc) rc = x4_auth_set_stream_startup(auth, x4_live_media_stream_startup(live));
+                if (!rc) rc = x4_auth_set_keyframe_limiter(auth, x4_live_media_keyframe_limiter(live));
+#endif
+                if (!rc) {
+                    game_controls = 0;
+#if X4_STREAM_PROFILE
+                    rc = x4_auth_start_session_request(auth, 0, &request_cfg);
+#else
+                    rc = x4_auth_start_session(auth, 0);
+#endif
+                }
+                if (rc && !live_error) live_error = rc;
+#if X4_STREAM_PROFILE
+                loading_begin_cached(catalog_assets,catalog.count?&catalog.titles[0]:NULL,sceKernelGetProcessTime());
+#endif
+                x4_auth_session_snapshot(auth, &session);
+                if (rc == 0 || session.state == X4_SESSION_ERROR || live_error) {
+                    session_back = 0;
+                    screen.page = 6;
+                    is_fortnite_session = true;
+                }
+                if (rc == X4_AUTH_E_SIGNED_OUT) screen.page = 4;
+                if (rc) printf("XCloud4: iniciar sesion Fortnite fallo 0x%08x\n", (unsigned)rc);
+            }
+        }
         if (!closing && screen.page == 5 && catalog.state == X4_CATALOG_READY && !x4_auth_busy(auth) &&
             pending_auth < 0 && !pending_launch) {
             char wanted[X4_CATALOG_ASSET_SLOTS][X4_PRODUCT_ID_CAP];
             const char *ids[X4_CATALOG_ASSET_SLOTS];
             size_t wanted_count = x4_catalog_presentation_demand(&presentation, &catalog_browser, &catalog, &recent, wanted);
+            for (unsigned fi = 0; fi < catalog_browser.featured_count && wanted_count < X4_CATALOG_ASSET_SLOTS; ++fi) {
+                unsigned fsrc = catalog_browser.featured_sources[fi];
+                if (fsrc < catalog.count && catalog.titles[fsrc].product_id[0]) {
+                    bool present = false;
+                    for (size_t k = 0; k < wanted_count; ++k) {
+                        if (!strcmp(wanted[k], catalog.titles[fsrc].product_id)) { present = true; break; }
+                    }
+                    if (!present) {
+                        snprintf(wanted[wanted_count], X4_PRODUCT_ID_CAP, "%s", catalog.titles[fsrc].product_id);
+                        ++wanted_count;
+                    }
+                }
+            }
             for (size_t i = 0; i < wanted_count; ++i) ids[i] = wanted[i];
             x4_catalog_assets_request(catalog_assets, ids, wanted_count);
+            x4_catalog_assets_resume(catalog_assets);
+        } else if (!closing && (screen.page == 0 || screen.page == 8) && !x4_auth_busy(auth) && pending_auth < 0 && !pending_launch) {
+            const char *home_ids[2];
+            size_t home_count = 0;
+            home_ids[home_count++] = "BT5P2X999VH2";
+            if (catalog.state == X4_CATALOG_READY && catalog_browser.featured_count > 0) {
+                unsigned fsrc = catalog_browser.featured_sources[0];
+                if (fsrc < catalog.count && catalog.titles[fsrc].product_id[0] &&
+                    strcmp(catalog.titles[fsrc].product_id, "BT5P2X999VH2") != 0) {
+                    home_ids[home_count++] = catalog.titles[fsrc].product_id;
+                }
+            }
+            x4_catalog_assets_request(catalog_assets, home_ids, home_count);
             x4_catalog_assets_resume(catalog_assets);
         } else x4_catalog_assets_suspend(catalog_assets);
         if (live && !live_retained) {
@@ -803,12 +1192,14 @@ reopen_interface:;
             }
         }
 #if X4_STREAM_PROFILE
+        if(!live&&screen.page!=6&&x4_loading_screen_active())x4_loading_screen_end();
         /* The stream close joins CPU readers and closes its VideoOut before
          * UI ownership can be restored. Never reopen over retained resources. */
         if(stream_display_active && live_status.video_display_detached){
             rc=x4_display_open(&display);
             if(rc<0){printf("XCloud4: reabrir pantalla UI fallo 0x%08x; no se puede dibujar el aviso, cierre seguro\n",(unsigned)rc);break;}
-            stream_display_active=false;
+            stream_display_active=false;ui_state_sig=0;ui_dirty_buffers=2;
+            x4_picture_settings_ui_cache_invalidate();x4_catalog_gui_keyboard_cache_invalidate();
         }
 #endif
         if (screen.page != 3 && media_active) {
@@ -838,6 +1229,7 @@ reopen_interface:;
         bool live_visible = screen.page == 6 && live && x4_auth_busy(auth) && !closing && !session_back &&
             !live_error && !live_status.video_error && session.state != X4_SESSION_STOPPING &&
             live_status.video_ready;
+        bool loading_transition=false;
         X4Trace *live_trace = live ? x4_live_media_trace(live) : NULL;
         if (!closing && screen.page == 6 && live && x4_auth_busy(auth)) {
             if (live_status.video_ready && !video_banner_until_us) {
@@ -853,7 +1245,19 @@ reopen_interface:;
          * must not conceal a gap in actual NEW live completions. */
         x4_trace_poll(live_trace);
 #if X4_STREAM_PROFILE
-        if(live_visible&&!stream_display_active){
+        /* video_ready is published only after a valid native output, not RTP,
+         * SPS, Query or Create. Fade the UI by its own clock before handing
+         * VideoOut to streaming: a single picture is enough, even if the next
+         * AU never arrives. The decoder and normal latest-ready ring continue. */
+        if(live_visible&&!stream_display_active&&x4_loading_screen_active()){
+            uint64_t transition_at=sceKernelGetProcessTime();
+            x4_loading_screen_first_picture(transition_at);
+            loading_transition=!x4_loading_screen_transition_ready(transition_at);
+            if(!loading_transition)x4_loading_screen_end();
+        }
+        if(live_visible&&!stream_display_active&&!loading_transition){
+            x4_ui_draw_metrics_flush(sceKernelGetProcessTime());
+            x4_picture_settings_ui_cache_invalidate();x4_catalog_gui_keyboard_cache_invalidate();
             rc=x4_display_close_checked(&display);
             if(rc){
                 live_error=rc;trace_inactive(live);x4_auth_cancel(auth);
@@ -870,12 +1274,28 @@ reopen_interface:;
                 stream_halt_video_error(live, &live_status, live_error, &video_start_error);
             } else stream_display_active=true;
         }
+        if(screen.page==6&&x4_loading_screen_active())x4_loading_screen_update(&session,input_at);
         if(stream_display_active){
             if(live&&!live_retained&&!live_error){
+                uint64_t menu_prepare_begin=sceKernelGetProcessTime();
+                X4TouchMenuCacheStats before_menu,after_menu;
+                x4_touch_menu_cache_snapshot(&before_menu);
+                (void)x4_touch_menu_prepare(&touch_menu,live_muted);
+                x4_touch_menu_cache_snapshot(&after_menu);
+                if(after_menu.regenerations!=before_menu.regenerations)
+                    x4_ui_perf_record(&menu_prepare_times,sceKernelGetProcessTime()-menu_prepare_begin);
+                x4_live_media_stream_note_menu_open(live,touch_menu.is_open);
+#if !X4_PUBLIC
                 if(!stream_received_until&&live_status.video_color_ready)
                     stream_received_until=input_at+6000000;
+#endif
                 StreamOverlayContext overlay={&live_status,&session,live_muted,&touch_menu,show_banner,
-                    live_status.video_color_ready&&input_at<stream_received_until};
+#if X4_PUBLIC
+                    false
+#else
+                    live_status.video_color_ready&&input_at<stream_received_until
+#endif
+                };
 #if X4_STREAM_PROFILE
                 interaction_phase(X4_MON_PHASE_DRAW,sceKernelGetProcessTime());
 #endif
@@ -911,6 +1331,7 @@ reopen_interface:;
             session.rtc_connected, session.state, screen.exit_error, controller.data.connected,
             (touch_menu.is_open ? (10 + touch_menu.selected_index) : 0) + (show_banner ? 100 : 0)};
         uint64_t draw_at = sceKernelGetProcessTime();
+        x4_ui_draw_metrics_poll(draw_at,ui_dirty_skips);
         bool overlay_changed = memcmp(overlay_key, next_overlay_key, sizeof(overlay_key)) != 0;
         if (live_visible && live_presented && !overlay_changed && draw_at - overlay_at < 500000 &&
             !x4_live_media_has_new_picture(live)) {
@@ -927,25 +1348,166 @@ reopen_interface:;
 #if X4_STREAM_PROFILE
         interaction_phase(X4_MON_PHASE_DRAW,sceKernelGetProcessTime());
 #endif
-        bool drew_live = live_visible && x4_live_media_draw(live, x4_display_pixels(&display));
-        uint64_t drawn_generation = 0, drawn_output = 0;
-        bool drawn_fresh = false;
+        /* Spinner advances at 10 Hz only on waiting pages. Dirty-buffer
+         * hashing still skips unchanged static screens. */
+        bool ui_animated = !live_visible && (closing ||
+            (screen.page == 4 && (x4_auth_busy(auth) || account.state == X4_AUTH_WAITING || account.state == X4_AUTH_CONNECTING)) ||
+            ((screen.page == 8 || screen.page == 5) && (x4_auth_busy(auth) || catalog.state == X4_CATALOG_LOADING)) ||
+            (screen.page == 6 && x4_auth_busy(auth)));
+        x4_apple_set_animation_phase(ui_animated ? (unsigned)(draw_at / 100000u) : 0);
+        bool ui_reuse_work=false;
+        if (!live_visible && screen.page != 3 && screen.page != 6) {
+            uint32_t next_ui_sig = 2166136261u;
+#define UI_HASH(v) do { next_ui_sig ^= (uint32_t)(v); next_ui_sig *= 16777619u; } while (0)
+            UI_HASH(screen.page);
+            if (screen.page == 2) UI_HASH(x4_release_check_status(NULL, 0));
+            UI_HASH(screen.selected);
+            UI_HASH(screen.signed_in);
+            UI_HASH(screen.exit_error);
+            UI_HASH(x4_apple_get_animation_phase());
+            UI_HASH(account.state);
+            UI_HASH(account.error);
+            UI_HASH(account.seconds_left);
+            UI_HASH(account.http_status);
+            UI_HASH(catalog.state);
+            UI_HASH(catalog.count);
+            UI_HASH(catalog_browser.active_tab);
+            UI_HASH(catalog_browser.top_bar_focused);
+            UI_HASH(catalog_browser.top_bar_index);
+            UI_HASH(catalog_browser.hero_focused);
+            UI_HASH(catalog_browser.featured_index);
+            UI_HASH(catalog_browser.discover_row_selected);
+            UI_HASH(catalog_browser.selected);
+            UI_HASH(catalog_browser.recent_selected);
+            UI_HASH(catalog_browser.filter);
+            UI_HASH(catalog_browser.editing);
+            UI_HASH(catalog_browser.keyboard_cursor);
+            UI_HASH(catalog_browser.detail_scroll_offset);
+            UI_HASH(catalog_browser.filtered_count);
+            for (size_t qi = 0; qi < sizeof(catalog_browser.query) && catalog_browser.query[qi]; ++qi) {
+                UI_HASH(catalog_browser.query[qi]);
+            }
+            UI_HASH(metadata_revision);
+            UI_HASH(x4_catalog_assets_idle(catalog_assets));
+            UI_HASH(x4_auth_busy(auth));
+            UI_HASH(picture_settings_ui.open);
+            UI_HASH(picture_settings_ui.tab);
+            UI_HASH(picture_settings_ui.selected);
+            UI_HASH(picture_settings_ui.server_selected);
+            UI_HASH(picture_settings_ui.server_scroll_offset);
+            UI_HASH(controller.data.connected);
+            UI_HASH(controller.data.buttons);
+#if X4_STREAM_PROFILE && !X4_PUBLIC
+            UI_HASH(stream_settings_ui.open);
+            UI_HASH(stream_settings_ui.row);
+#endif
+#undef UI_HASH
+            if (next_ui_sig != ui_state_sig || catalog_copied || recent_copied || metadata_changed) {
+                ui_state_sig = next_ui_sig;
+                ui_dirty_buffers = 2;
+            }
+            if (ui_dirty_buffers == 0) {
+                ++ui_dirty_skips;
+                main_submit_done();
+                sceKernelUsleep(4000);
+                continue;
+            }
+            ui_reuse_work=ui_dirty_buffers==1;
+            --ui_dirty_buffers;
+        } else {
+            ui_dirty_buffers = 2;
+        }
+        uint64_t ui_draw_begin = sceKernelGetProcessTime();
+        bool loading_visible=false,loading_full_damage=false;
+        bool options_ready=x4_picture_settings_ui_cache_ready(&picture_settings_ui);
+        bool keyboard_ready=x4_catalog_gui_keyboard_cache_ready(&catalog_browser);
+        if(screen.page!=5||!catalog_browser.editing)x4_catalog_gui_keyboard_cache_invalidate();
+        bool drew_live=false,drawn_fresh=false;
+        uint64_t drawn_generation=0,drawn_output=0;
+        enum X4UiScreen ui_metric=X4_UI_OTHER;bool ui_navigation=false;
+        if(ui_reuse_work){ui_metric=ui_previous_metric;ui_navigation=ui_previous_navigation;}
+        if(!ui_reuse_work){
+#if X4_STREAM_PROFILE
+        loading_visible=screen.page==6&&(!live_visible||loading_transition)&&!live_error&&!closing&&!session_back&&
+            x4_auth_busy(auth)&&session.state!=X4_SESSION_ERROR&&
+            session.state!=X4_SESSION_STOPPING&&session.state!=X4_SESSION_CLOSED&&session.state!=X4_SESSION_CANCELLED&&
+            !session.error&&session.http_status<400&&!session.cleanup_failed&&x4_loading_screen_active();
+        if(loading_visible){
+            X4LoadingView before_loading,after_loading;x4_loading_screen_snapshot(&before_loading);
+            if(!x4_loading_screen_draw(x4_display_pixels(&display),ui_draw_begin)){
+                main_submit_done();sceKernelUsleep(1000);continue;
+            }
+            x4_loading_screen_snapshot(&after_loading);
+            loading_full_damage=after_loading.first_picture||
+                after_loading.full_buffer_initializations!=before_loading.full_buffer_initializations;
+        }
+#endif
+        drew_live = live_visible && !loading_transition && x4_live_media_draw(live, x4_display_pixels(&display));
         if (drew_live && !live_retained)
             x4_live_media_drawn(live, &drawn_generation, &drawn_output, &drawn_fresh);
         /* Media draw records the independent native-output identity. Display
          * uses the actual drawn publication tag, never a later snapshot. */
         (void)drawn_output;
-        if (!drew_live && screen.page != 5) x4_screen_draw(&screen, &controller, x4_display_pixels(&display));
+        /* A modal owns its frozen WB backdrop until close. Do not redraw the
+         * underlying page, blur or dim it again for focus navigation. */
+        if(!options_ready){
+        if (!drew_live && screen.page != 5 && !loading_visible) {
+            if (screen.page == 0 || screen.page == 8 || screen.page == 2 || screen.page == 4) {
+                static X4HomeDrawContext hctx;
+                static X4CatalogAssetView fn_view, feat_view;
+                memset(&hctx, 0, sizeof(hctx));
+                memset(&fn_view, 0, sizeof(fn_view));
+                memset(&feat_view, 0, sizeof(feat_view));
+                hctx.app_icon = &ui_app_icon.surface[X4_COVER_GRID];
+                hctx.signed_in = (account.state == X4_AUTH_AUTHORIZED);
+                snprintf(hctx.gamertag, sizeof(hctx.gamertag), "%s", catalog.gamertag);
+                int fn_acq = (catalog_assets && x4_catalog_assets_acquire(catalog_assets, "BT5P2X999VH2", &fn_view));
+                int feat_acq = 0;
+                if (catalog_assets && catalog.state == X4_CATALOG_READY && catalog_browser.featured_count > 0) {
+                    unsigned fsrc = catalog_browser.featured_sources[0];
+                    if (fsrc < catalog.count && catalog.titles[fsrc].product_id[0]) {
+                        feat_acq = x4_catalog_assets_acquire(catalog_assets, catalog.titles[fsrc].product_id, &feat_view);
+                    }
+                }
+                if (fn_acq) {
+                    hctx.fortnite_cover = fn_view.surface[X4_COVER_GRID].rgba
+                        ? &fn_view.surface[X4_COVER_GRID]
+                        : (fn_view.surface[X4_COVER_DETAIL].rgba ? &fn_view.surface[X4_COVER_DETAIL] : NULL);
+                }
+                if (feat_acq) {
+                    hctx.featured_hero = feat_view.surface[X4_COVER_DETAIL].rgba
+                        ? &feat_view.surface[X4_COVER_DETAIL]
+                        : (feat_view.surface[X4_COVER_GRID].rgba ? &feat_view.surface[X4_COVER_GRID] : NULL);
+                } else if (fn_acq && fn_view.surface[X4_COVER_DETAIL].rgba) {
+                    hctx.featured_hero = &fn_view.surface[X4_COVER_DETAIL];
+                }
+                x4_screen_set_home_context(&hctx);
+                x4_screen_draw(&screen, &controller, x4_display_pixels(&display));
+                if (screen.page == 8) x4_fortnite_summary_draw(&screen, &catalog, x4_auth_busy(auth), x4_display_pixels(&display));
+                if (feat_acq) x4_catalog_assets_release(catalog_assets, &feat_view);
+                if (fn_acq) x4_catalog_assets_release(catalog_assets, &fn_view);
+            } else {
+                x4_screen_draw(&screen, &controller, x4_display_pixels(&display));
+            }
+        }
         if (screen.page == 3) x4_media_draw(&video, &audio, x4_display_pixels(&display));
         if (screen.page == 6) {
             if (drew_live)
                 x4_live_overlay(&live_status, &session, live_muted, &touch_menu, show_banner, x4_display_pixels(&display));
-            else {
+            else if(!loading_visible) {
                 X4SessionSnapshot shown = session;
 #if X4_STREAM_PROFILE
                 if(!live_error && live && !closing && !session_back &&
-                    x4_auth_busy(auth) && x4_live_media_waiting_initial_resolution(live))
-                    snprintf(shown.stage,sizeof(shown.stage),"Esperando 1080p de Xbox…");
+                    x4_auth_busy(auth) && x4_live_media_waiting_initial_resolution(live)) {
+                    uint64_t sent_us = x4_stream_startup_alias_sent_us(x4_live_media_stream_startup(live));
+                    uint64_t now_w = sceKernelGetProcessTime();
+                    uint64_t wait_sec = (sent_us && now_w >= sent_us) ? (unsigned)((now_w - sent_us) / 1000000ULL) : 0;
+                    if (wait_sec >= 5) {
+                        snprintf(shown.stage, sizeof(shown.stage), "Xbox está preparando el juego… %u s", (unsigned)wait_sec);
+                    } else {
+                        snprintf(shown.stage, sizeof(shown.stage), "Esperando 1080p de Xbox…");
+                    }
+                }
 #endif
 #if X4_STREAM_PROFILE
                 if (live_error && (!x4_auth_busy(auth) || video_start_error)) {
@@ -973,16 +1535,62 @@ reopen_interface:;
         else if (screen.page == 5) {
             X4CatalogGuiStatus gui = {controller.data.connected, x4_auth_busy(auth),
                 pending_launch || pending_auth >= 0, ui_notice};
-            x4_catalog_gui_draw(&catalog, &catalog_browser, &recent, catalog_assets, &gui, x4_display_pixels(&display));
+            x4_catalog_gui_draw_cached(&catalog, &catalog_browser, &recent, catalog_assets, &gui, x4_display_pixels(&display));
 #if X4_STREAM_PROFILE && !X4_PUBLIC
             x4_stream_settings_ui_draw(&stream_settings_ui,x4_display_pixels(&display));
 #endif
         }
+        }
+        if (picture_settings_ui.open) {
+            x4_picture_settings_ui_draw_cached(&picture_settings_ui, x4_display_pixels(&display));
+        }
         x4_exit_error_draw(screen.exit_error, x4_display_pixels(&display));
+        if(screen.exit_error||live_error||(screen.page==6&&session.state==X4_SESSION_ERROR))ui_metric=X4_UI_ERRORS;
+        else if(picture_settings_ui.open){
+            ui_metric=picture_settings_ui.first_time_mode?X4_UI_FIRST_TIME:
+                picture_settings_ui.tab?X4_UI_OPTIONS_SERVER:X4_UI_OPTIONS_PICTURE;
+            ui_navigation=options_ready;
+        }else if(screen.page==5&&catalog_browser.editing){ui_metric=X4_UI_KEYBOARD;ui_navigation=keyboard_ready;}
+#if X4_STREAM_PROFILE && !X4_PUBLIC
+        else if(stream_settings_ui.open)ui_metric=X4_UI_LAB_SETTINGS;
+#endif
+        else switch(screen.page){
+            case 0:ui_metric=X4_UI_HOME;break;case 2:ui_metric=X4_UI_ABOUT;break;
+            case 3:ui_metric=X4_UI_DEMO;break;case 4:ui_metric=X4_UI_ACCOUNT;break;
+            case 5:ui_metric=X4_UI_CATALOG;break;
+            case 6:ui_metric=session.waiting_for_resources?X4_UI_QUEUE:X4_UI_LOADING;break;
+            case 7:ui_metric=X4_UI_SUPPORT;break;case 8:ui_metric=X4_UI_FORTNITE;break;
+            default:ui_metric=X4_UI_OTHER;break;
+        }
+        if(loading_visible)ui_navigation=!loading_full_damage;
+        ui_previous_metric=ui_metric;ui_previous_navigation=ui_navigation;
+        }
+        /* Getter access defaults to full damage. Narrow it only after every
+         * renderer/overlay has finished, never while a later draw can expand
+         * its writes. Pending changes in the other scanout remain intact. */
+        if(ui_reuse_work)x4_display_set_damage(&display,NULL,0);
+        else if(!screen.exit_error&&!drew_live){
+            if(loading_visible&&!loading_full_damage){const X4UiRect r={510,230,900,680};x4_display_set_damage(&display,&r,1);}
+            else if(picture_settings_ui.open){
+                X4PictureSettingsCacheStats cache;x4_picture_settings_ui_cache_snapshot(&cache);
+                if(!cache.last_draw_full){const X4UiRect r={100,126,1720,836};x4_display_set_damage(&display,&r,1);}
+            }else if(screen.page==5&&catalog_browser.editing){
+                X4CatalogKeyboardCacheStats cache;x4_catalog_gui_keyboard_cache_snapshot(&cache);
+                if(!cache.last_draw_full){const X4UiRect r={420,200,1080,680};x4_display_set_damage(&display,&r,1);}
+            }
+        }
+        uint64_t ui_draw_end=sceKernelGetProcessTime();
         uint64_t present_begin = sceKernelGetProcessTime();
         rc = drew_live && trace_active ?
             x4_display_present_trace(&display, live_trace, drawn_generation, drawn_fresh) :
             x4_display_present(&display);
+        uint64_t present_end=sceKernelGetProcessTime();
+        if(!drew_live){
+            X4UiCopyStats copied;x4_display_copy_stats(&display,&copied);
+            x4_ui_draw_metrics_record(ui_metric,ui_navigation,!ui_reuse_work,
+                ui_reuse_work?0:ui_draw_end-ui_draw_begin,copied.elapsed_us,
+                present_end-present_begin,copied.bytes,present_end,ui_dirty_skips);
+        }
         if (rc == 0 && drew_live && live && !live_retained) {
             x4_live_media_note_present(live, sceKernelGetProcessTime() - present_begin);
             memcpy(overlay_key, next_overlay_key, sizeof(overlay_key));
@@ -1047,6 +1655,11 @@ reopen_interface:;
 #else
     x4_display_close(&display);
 #endif
+    x4_cover_rasters_free(&ui_app_icon);
+    x4_loading_screen_end();
+    x4_touch_menu_cache_reset();
+    x4_ui_draw_metrics_flush(sceKernelGetProcessTime());
+    x4_picture_settings_ui_cache_invalidate();x4_catalog_gui_keyboard_cache_invalidate();
     x4_font_close();
     printf("XCloud4: recursos cerrados\n");
     x4_release_check_stop();

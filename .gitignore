@@ -9,6 +9,7 @@ pkg.gp4
 .env
 .env.*
 *.pem
+!assets/certs/*.pem
 *.key
 *.log
 .cache/

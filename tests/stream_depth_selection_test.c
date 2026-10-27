@@ -14,7 +14,7 @@ _Static_assert(sizeof(X4StreamRequestConfig)==64&&offsetof(X4StreamRequestConfig
 static void resolution_policy(void)
 {
     X4StreamRequestConfig initial=x4_stream_settings_get();
-    assert(initial.profile==X4_REQUEST_720P_HQ&&initial.cpu_variant==X4_CPU_0&&
+    assert(initial.profile==X4_REQUEST_1080P_G&&initial.cpu_variant==X4_CPU_0&&
         initial.decoder_depth==X4_DEPTH_AUTO);
     for(unsigned profile=0;profile<X4_REQUEST_PROFILE_COUNT;++profile){
         X4StreamRequestConfig c=x4_stream_request_config((X4StreamRequestProfile)profile,X4_COLOR_AUTO_709);
